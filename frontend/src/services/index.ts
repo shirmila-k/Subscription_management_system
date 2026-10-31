@@ -10,6 +10,9 @@ import {
   Quotation,
   QuotationTemplate,
   AnalyticsOverview,
+  MonthlyRevenueTrendItem,
+  ChurnAnalytics,
+  PaymentMethodBreakdownResponse,
 } from '../types';
 
 export const authService = {
@@ -87,8 +90,8 @@ export const subscriptionService = {
     axiosClient.post<Subscription>(`/subscriptions/${id}/accept-quote`) as unknown as Promise<Subscription>,
   activateSubscription: (id: string) =>
     axiosClient.post<Subscription>(`/subscriptions/${id}/activate`) as unknown as Promise<Subscription>,
-  renew: (id: string) =>
-    axiosClient.post<Subscription>(`/subscriptions/${id}/activate`) as unknown as Promise<Subscription>,
+  renew: (id: string, data?: any) =>
+    axiosClient.post<Subscription>(`/subscriptions/${id}/renew`, data) as unknown as Promise<Subscription>,
   pauseSubscription: (id: string, reason?: string) =>
     axiosClient.post<Subscription>(`/subscriptions/${id}/pause`, { reason }) as unknown as Promise<Subscription>,
   pause: (id: string, reason?: string) =>
@@ -101,6 +104,8 @@ export const subscriptionService = {
     axiosClient.post<Subscription>(`/subscriptions/${id}/close`, { reason }) as unknown as Promise<Subscription>,
   close: (id: string, reason?: string) =>
     axiosClient.post<Subscription>(`/subscriptions/${id}/close`, { reason }) as unknown as Promise<Subscription>,
+  cancel: (id: string, reason?: string) =>
+    axiosClient.post<Subscription>(`/subscriptions/${id}/cancel`, { reason }) as unknown as Promise<Subscription>,
 };
 
 export const quotationService = {
@@ -146,6 +151,8 @@ export const invoiceService = {
     axiosClient.get<Invoice>(`/invoices/${id}`) as unknown as Promise<Invoice>,
   generateInvoice: (subscriptionId: string) =>
     axiosClient.post<Invoice>('/invoices/generate', { subscriptionId }) as unknown as Promise<Invoice>,
+  updateStatus: (id: string, status: string, notes?: string) =>
+    axiosClient.patch<Invoice>(`/invoices/${id}/status`, { status, notes }) as unknown as Promise<Invoice>,
   getPdfUrl: (id: string) => `${axiosClient.defaults.baseURL}/invoices/${id}/pdf`,
   downloadPdf: (id: string) => {
     const url = `${axiosClient.defaults.baseURL}/invoices/${id}/pdf`;
@@ -158,10 +165,14 @@ export const paymentService = {
     axiosClient.get<Payment[]>('/payments', { params }) as unknown as Promise<Payment[]>,
   getAll: (params?: any) =>
     axiosClient.get<Payment[]>('/payments', { params }) as unknown as Promise<Payment[]>,
+  getPaymentById: (id: string) =>
+    axiosClient.get<Payment>(`/payments/${id}`) as unknown as Promise<Payment>,
   recordPayment: (data: any) =>
     axiosClient.post<Payment>('/payments', data) as unknown as Promise<Payment>,
   create: (data: any) =>
     axiosClient.post<Payment>('/payments', data) as unknown as Promise<Payment>,
+  refundPayment: (id: string, reason?: string) =>
+    axiosClient.post<Payment>(`/payments/${id}/refund`, { reason }) as unknown as Promise<Payment>,
 };
 
 export const discountService = {
@@ -190,13 +201,31 @@ export const analyticsService = {
       res.mrr = res.kpis.mrr;
       res.arr = res.kpis.arr;
       res.activeSubscriptions = res.kpis.activeSubscriptions;
-      res.totalRevenue = res.kpis.totalCollectedRevenue;
+      res.totalRevenue = res.kpis.netCollectedRevenue ?? res.kpis.totalCollectedRevenue;
       res.totalSubscriptions = res.kpis.totalSubscriptions;
     }
     return res;
   },
-  getRevenueTrend: () =>
-    axiosClient.get<any[]>('/analytics/revenue-trend') as unknown as Promise<any[]>,
+  getRevenueTrend: (months?: number) =>
+    axiosClient.get<MonthlyRevenueTrendItem[]>(`/analytics/revenue-trend${months ? `?months=${months}` : ''}`) as unknown as Promise<MonthlyRevenueTrendItem[]>,
+  getChurnAnalytics: () =>
+    axiosClient.get<ChurnAnalytics>('/analytics/churn') as unknown as Promise<ChurnAnalytics>,
+  getPaymentMethodBreakdown: () =>
+    axiosClient.get<PaymentMethodBreakdownResponse>('/analytics/payment-methods') as unknown as Promise<PaymentMethodBreakdownResponse>,
+  downloadFinancialReportCsv: async () => {
+    const response = await axiosClient.get('/analytics/export/financial-summary', {
+      responseType: 'blob',
+    });
+    const blob = new Blob([response as any], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `brightloop_financial_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode?.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 export const customerService = {

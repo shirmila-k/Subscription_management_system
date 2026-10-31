@@ -6,8 +6,16 @@ import {
   BillingFrequency,
   ProductStatus,
   PlanStatus,
+  InvoiceStatus,
 } from '@prisma/client';
 import { env } from '../../config/env';
+import {
+  calculateNextBillingPeriod,
+  calculateMonetaryBreakdown,
+  addYearsSafe,
+  addMonthsSafe,
+} from './billing.calculator';
+import { invoicesService } from '../invoices/invoices.service';
 
 export interface CreateSubscriptionInput {
   customerId: string;
@@ -15,7 +23,7 @@ export interface CreateSubscriptionInput {
   quantity?: number;
   discountCode?: string;
   paymentTerms?: PaymentTerms;
-  startDate?: Date;
+  startDate?: Date | string;
   autoRenew?: boolean;
   notes?: string;
   status?: SubscriptionStatus; // DRAFT or QUOTATION
@@ -23,22 +31,14 @@ export interface CreateSubscriptionInput {
 
 export class SubscriptionsService {
   /**
-   * Helper to generate unique subscription reference numbers
+   * Helper to generate unique subscription reference numbers: SUB-YYYY-XXXXX
    */
   private async generateSubscriptionNumber(): Promise<string> {
     const year = new Date().getFullYear();
     const count = await prisma.subscription.count();
-    const sequence = (count + 1).toString().padStart(5, '0');
-    return `SUB-${year}-${sequence}`;
-  }
-
-  /**
-   * Calculate next billing date from start date and billingCycleDays
-   */
-  private computeNextBillingDate(startDate: Date, days: number): Date {
-    const nextDate = new Date(startDate);
-    nextDate.setDate(nextDate.getDate() + days);
-    return nextDate;
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    const sequence = (count + 1).toString().padStart(4, '0');
+    return `SUB-${year}-${sequence}-${rand}`;
   }
 
   /**
@@ -76,7 +76,7 @@ export class SubscriptionsService {
     }
 
     const unitPrice = Number(plan.price);
-    const subtotal = Math.round(unitPrice * quantity * 100) / 100;
+    const rawSubtotal = Math.round(unitPrice * quantity * 100) / 100;
 
     let discountId: string | null = null;
     let discountAmount = 0;
@@ -85,79 +85,99 @@ export class SubscriptionsService {
       const discountResult = await discountsService.validateAndApplyDiscount(
         input.discountCode,
         quantity,
-        subtotal
+        rawSubtotal
       );
       discountId = discountResult.discount.id;
       discountAmount = discountResult.discountAmount;
     }
 
-    const taxableAmount = Math.max(0, subtotal - discountAmount);
-    const taxRate = env.billingTaxPercent;
-    const taxAmount = Math.round(((taxableAmount * taxRate) / 100) * 100) / 100;
-    const totalAmount = Math.round((taxableAmount + taxAmount) * 100) / 100;
+    const breakdown = calculateMonetaryBreakdown({
+      unitPrice,
+      quantity,
+      discountAmount,
+      taxRatePercent: env.billingTaxPercent,
+    });
 
     const subNumber = await this.generateSubscriptionNumber();
     const initialStatus = input.status || SubscriptionStatus.DRAFT;
     const startDate = input.startDate ? new Date(input.startDate) : new Date();
 
-    const subscription = await prisma.subscription.create({
-      data: {
-        subscriptionNumber: subNumber,
-        customerId: input.customerId,
-        createdById: createdById || null,
-        planId: input.planId,
-        status: initialStatus,
-        quantity,
-        unitPrice,
-        discountId,
-        discountAmount,
-        taxRate,
-        taxAmount,
-        subtotal,
-        totalAmount,
-        paymentTerms: input.paymentTerms || PaymentTerms.NET_30,
-        startDate,
-        autoRenew: input.autoRenew ?? plan.autoRenew,
-        notes: input.notes,
-        ...(initialStatus === SubscriptionStatus.QUOTATION && {
-          quotationSentAt: new Date(),
-        }),
-      },
-      include: {
-        plan: { include: { product: true } },
-        customer: {
-          select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
+    const { nextBillingDate } = calculateNextBillingPeriod(
+      startDate,
+      plan.billingFrequency,
+      plan.billingCycleDays
+    );
+
+    let expiryDate: Date | null = null;
+    if (plan.billingFrequency === BillingFrequency.YEARLY) {
+      expiryDate = addYearsSafe(startDate, 1);
+    } else if (plan.billingFrequency === BillingFrequency.MONTHLY) {
+      expiryDate = addMonthsSafe(startDate, 12); // Standard 1-year annual contract term
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const subscription = await tx.subscription.create({
+        data: {
+          subscriptionNumber: subNumber,
+          customerId: input.customerId,
+          createdById: createdById || null,
+          planId: input.planId,
+          status: initialStatus,
+          quantity,
+          unitPrice,
+          discountId,
+          discountAmount: breakdown.discountAmount,
+          taxRate: breakdown.taxRate,
+          taxAmount: breakdown.taxAmount,
+          subtotal: breakdown.subtotal,
+          totalAmount: breakdown.totalAmount,
+          paymentTerms: input.paymentTerms || PaymentTerms.NET_30,
+          startDate,
+          nextBillingDate,
+          expiryDate,
+          autoRenew: input.autoRenew ?? plan.autoRenew,
+          notes: input.notes,
+          ...(initialStatus === SubscriptionStatus.QUOTATION && {
+            quotationSentAt: new Date(),
+          }),
         },
-      },
-    });
+        include: {
+          plan: { include: { product: true, variant: true } },
+          customer: {
+            select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
+          },
+        },
+      });
 
-    // Create initial subscription item snapshot to preserve agreed price
-    await prisma.subscriptionItem.create({
-      data: {
-        subscriptionId: subscription.id,
-        productId: plan.productId,
-        variantId: plan.variantId,
-        planId: plan.id,
-        description: plan.name,
-        quantity,
-        unitPrice: plan.price,
-        lineTotal: subtotal,
-      },
-    });
+      // Create snapshot item in subscription_items to preserve agreed price
+      const variantDesc = plan.variant ? ` (${plan.variant.name})` : '';
+      await tx.subscriptionItem.create({
+        data: {
+          subscriptionId: subscription.id,
+          productId: plan.productId,
+          variantId: plan.variantId,
+          planId: plan.id,
+          description: `${plan.product.name}${variantDesc} - ${plan.name}`,
+          quantity,
+          unitPrice: plan.price,
+          lineTotal: breakdown.subtotal,
+        },
+      });
 
-    // Record initial lifecycle log
-    await prisma.subscriptionLifecycleLog.create({
-      data: {
-        subscriptionId: subscription.id,
-        fromStatus: SubscriptionStatus.DRAFT,
-        toStatus: initialStatus,
-        action: initialStatus === SubscriptionStatus.QUOTATION ? 'QUOTATION_CREATED' : 'DRAFT_CREATED',
-        notes: `Initial subscription ${initialStatus} created. Total: $${totalAmount}`,
-        performedById: createdById,
-      },
-    });
+      // Record initial lifecycle log
+      await tx.subscriptionLifecycleLog.create({
+        data: {
+          subscriptionId: subscription.id,
+          fromStatus: SubscriptionStatus.DRAFT,
+          toStatus: initialStatus,
+          action: initialStatus === SubscriptionStatus.QUOTATION ? 'QUOTATION_CREATED' : 'DRAFT_CREATED',
+          notes: `Initial subscription ${initialStatus} created. Total: ₹${breakdown.totalAmount.toFixed(2)}`,
+          performedById: createdById,
+        },
+      });
 
-    return subscription;
+      return subscription;
+    });
   }
 
   /**
@@ -177,7 +197,7 @@ export class SubscriptionsService {
         status: SubscriptionStatus.QUOTATION,
         quotationSentAt: new Date(),
       },
-      include: { customer: true, plan: true },
+      include: { customer: true, plan: true, items: true },
     });
 
     await prisma.subscriptionLifecycleLog.create({
@@ -186,7 +206,7 @@ export class SubscriptionsService {
         fromStatus: SubscriptionStatus.DRAFT,
         toStatus: SubscriptionStatus.QUOTATION,
         action: 'SENT_QUOTATION',
-        notes: 'Quotation sent to customer for approval',
+        notes: 'Quotation sent to customer for review and approval',
         performedById,
       },
     });
@@ -216,7 +236,7 @@ export class SubscriptionsService {
         quotationAcceptedAt: new Date(),
         confirmedAt: new Date(),
       },
-      include: { customer: true, plan: true },
+      include: { customer: true, plan: true, items: true },
     });
 
     await prisma.subscriptionLifecycleLog.create({
@@ -234,8 +254,8 @@ export class SubscriptionsService {
   }
 
   /**
-   * Confirm and Activate subscription (CONFIRMED -> ACTIVE)
-   * Calculates next billing date and optionally expires date based on plan
+   * Confirm and Activate subscription (CONFIRMED or DRAFT -> ACTIVE)
+   * Computes frequency-aware next billing date and contract expiry
    */
   async activateSubscription(id: string, performedById?: string) {
     const sub = await prisma.subscription.findUnique({
@@ -250,12 +270,17 @@ export class SubscriptionsService {
     }
 
     const startDate = new Date();
-    const nextBillingDate = this.computeNextBillingDate(startDate, sub.plan.billingCycleDays);
+    const { nextBillingDate } = calculateNextBillingPeriod(
+      startDate,
+      sub.plan.billingFrequency,
+      sub.plan.billingCycleDays
+    );
 
     let expiryDate: Date | null = null;
     if (sub.plan.billingFrequency === BillingFrequency.YEARLY) {
-      expiryDate = new Date(startDate);
-      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+      expiryDate = addYearsSafe(startDate, 1);
+    } else if (sub.plan.billingFrequency === BillingFrequency.MONTHLY) {
+      expiryDate = addMonthsSafe(startDate, 12);
     }
 
     const updated = await prisma.subscription.update({
@@ -267,7 +292,7 @@ export class SubscriptionsService {
         nextBillingDate,
         expiryDate,
       },
-      include: { customer: true, plan: true },
+      include: { customer: true, plan: true, items: true },
     });
 
     if (sub.discountId) {
@@ -280,7 +305,7 @@ export class SubscriptionsService {
         fromStatus: sub.status,
         toStatus: SubscriptionStatus.ACTIVE,
         action: 'ACTIVATED_SUBSCRIPTION',
-        notes: `Subscription activated. Next billing scheduled on: ${nextBillingDate.toISOString().split('T')[0]}`,
+        notes: `Subscription activated. Next billing scheduled for: ${nextBillingDate.toISOString().split('T')[0]}`,
         performedById,
       },
     });
@@ -290,6 +315,7 @@ export class SubscriptionsService {
 
   /**
    * Pause active subscription (ACTIVE -> PAUSED)
+   * Validates plan.canPause setting
    */
   async pauseSubscription(id: string, reason?: string, performedById?: string) {
     const sub = await prisma.subscription.findUnique({
@@ -298,6 +324,8 @@ export class SubscriptionsService {
     });
 
     if (!sub) throw new Error('Subscription not found');
+
+    // Business rule: Check if associated plan permits pausing
     if (!sub.plan.canPause) {
       throw new Error('This plan does not permit pausing active subscriptions');
     }
@@ -313,6 +341,7 @@ export class SubscriptionsService {
         pausedAt: new Date(),
         notes: reason ? `${sub.notes || ''}\n[Pause Reason]: ${reason}` : sub.notes,
       },
+      include: { customer: true, plan: true, items: true },
     });
 
     await prisma.subscriptionLifecycleLog.create({
@@ -331,6 +360,7 @@ export class SubscriptionsService {
 
   /**
    * Resume paused subscription (PAUSED -> ACTIVE)
+   * Recalculates next billing date from resume date
    */
   async resumeSubscription(id: string, performedById?: string) {
     const sub = await prisma.subscription.findUnique({
@@ -344,7 +374,12 @@ export class SubscriptionsService {
       throw new Error(`Cannot resume a subscription that is '${sub.status}'`);
     }
 
-    const nextBillingDate = this.computeNextBillingDate(new Date(), sub.plan.billingCycleDays);
+    const resumeDate = new Date();
+    const { nextBillingDate } = calculateNextBillingPeriod(
+      resumeDate,
+      sub.plan.billingFrequency,
+      sub.plan.billingCycleDays
+    );
 
     const updated = await prisma.subscription.update({
       where: { id },
@@ -352,6 +387,7 @@ export class SubscriptionsService {
         status: SubscriptionStatus.ACTIVE,
         nextBillingDate,
       },
+      include: { customer: true, plan: true, items: true },
     });
 
     await prisma.subscriptionLifecycleLog.create({
@@ -370,18 +406,37 @@ export class SubscriptionsService {
 
   /**
    * Close or Cancel subscription (ACTIVE/PAUSED -> CLOSED)
+   * Validates plan.canCloseEarly if subscription has not reached expiry date
    */
   async closeSubscription(id: string, reason?: string, performedById?: string) {
-    const sub = await prisma.subscription.findUnique({ where: { id } });
+    const sub = await prisma.subscription.findUnique({
+      where: { id },
+      include: { plan: true },
+    });
+
     if (!sub) throw new Error('Subscription not found');
+
+    if (sub.status === SubscriptionStatus.CLOSED || sub.status === SubscriptionStatus.CANCELLED) {
+      throw new Error(`Subscription is already in terminal '${sub.status}' state`);
+    }
+
+    const now = new Date();
+
+    // Business rule: Prevent early closure if plan disallows it and contract is not expired
+    if (!sub.plan.canCloseEarly && sub.expiryDate && now < sub.expiryDate) {
+      throw new Error(
+        `Early closure is disallowed for this subscription's plan before the expiration date (${sub.expiryDate.toISOString().split('T')[0]})`
+      );
+    }
 
     const updated = await prisma.subscription.update({
       where: { id },
       data: {
         status: SubscriptionStatus.CLOSED,
-        closedAt: new Date(),
-        cancellationReason: reason,
+        closedAt: now,
+        cancellationReason: reason || 'Subscription closed by request',
       },
+      include: { customer: true, plan: true, items: true },
     });
 
     await prisma.subscriptionLifecycleLog.create({
@@ -399,21 +454,98 @@ export class SubscriptionsService {
   }
 
   /**
-   * Fetch all subscriptions with filters (status, customer, date)
+   * Renew subscription for next billing cycle / term
+   * Computes next cycle boundaries, advances expiry, generates invoice, and records lifecycle log
+   */
+  async renewSubscription(id: string, performedById?: string, autoRenewOverride?: boolean) {
+    const sub = await prisma.subscription.findUnique({
+      where: { id },
+      include: {
+        plan: true,
+        items: true,
+      },
+    });
+
+    if (!sub) throw new Error('Subscription not found');
+
+    if (sub.status !== SubscriptionStatus.ACTIVE && sub.status !== SubscriptionStatus.CLOSED) {
+      throw new Error(`Cannot renew subscription in '${sub.status}' status`);
+    }
+
+    const today = new Date();
+    // Period start is either the current expiry date or next billing date or today
+    const currentAnchor = sub.expiryDate && sub.expiryDate > today ? sub.expiryDate : today;
+
+    const { nextBillingDate: newNextBillingDate, periodEnd: newPeriodEnd } = calculateNextBillingPeriod(
+      currentAnchor,
+      sub.plan.billingFrequency,
+      sub.plan.billingCycleDays
+    );
+
+    let newExpiryDate = newPeriodEnd;
+    if (sub.plan.billingFrequency === BillingFrequency.YEARLY) {
+      newExpiryDate = addYearsSafe(currentAnchor, 1);
+    } else if (sub.plan.billingFrequency === BillingFrequency.MONTHLY) {
+      newExpiryDate = addMonthsSafe(currentAnchor, 12);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const subUpdate = await tx.subscription.update({
+        where: { id: sub.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          nextBillingDate: newNextBillingDate,
+          expiryDate: newExpiryDate,
+          closedAt: null,
+          cancellationReason: null,
+          ...(autoRenewOverride !== undefined && { autoRenew: autoRenewOverride }),
+        },
+        include: { customer: true, plan: true, items: true },
+      });
+
+      await tx.subscriptionLifecycleLog.create({
+        data: {
+          subscriptionId: sub.id,
+          fromStatus: sub.status,
+          toStatus: SubscriptionStatus.ACTIVE,
+          action: 'RENEWED_SUBSCRIPTION',
+          notes: `Subscription renewed. New term: ${currentAnchor.toISOString().split('T')[0]} to ${newExpiryDate.toISOString().split('T')[0]}`,
+          performedById,
+        },
+      });
+
+      return subUpdate;
+    });
+
+    // Generate renewal invoice outside of the transaction to avoid nested transactions
+    try {
+      await invoicesService.generateInvoiceForSubscription(sub.id, currentAnchor);
+    } catch (err: any) {
+      console.warn(`[Renewal Note] ${err.message}`);
+    }
+
+    return updated;
+  }
+
+  /**
+   * Fetch all subscriptions with filters (status, customer, plan, search)
    */
   async getAllSubscriptions(params?: {
     customerId?: string;
+    planId?: string;
     status?: SubscriptionStatus;
     search?: string;
   }) {
     const where: any = {};
     if (params?.customerId) where.customerId = params.customerId;
+    if (params?.planId) where.planId = params.planId;
     if (params?.status) where.status = params.status;
     if (params?.search) {
       where.OR = [
         { subscriptionNumber: { contains: params.search } },
         { customer: { email: { contains: params.search } } },
         { customer: { companyName: { contains: params.search } } },
+        { plan: { name: { contains: params.search } } },
       ];
     }
 
@@ -432,8 +564,10 @@ export class SubscriptionsService {
         plan: {
           include: {
             product: { select: { name: true, code: true, brand: true } },
+            variant: { select: { name: true, sku: true } },
           },
         },
+        items: true,
         discount: true,
         _count: { select: { invoices: true } },
       },
@@ -442,7 +576,7 @@ export class SubscriptionsService {
   }
 
   /**
-   * Fetch subscription details including invoices and lifecycle history
+   * Fetch subscription details including items, invoices and lifecycle history
    */
   async getSubscriptionById(id: string) {
     const subscription = await prisma.subscription.findUnique({
@@ -456,12 +590,20 @@ export class SubscriptionsService {
             variant: true,
           },
         },
+        items: {
+          include: {
+            product: true,
+            variant: true,
+            plan: true,
+          },
+        },
         discount: true,
         invoices: {
           orderBy: { issueDate: 'desc' },
+          include: { payments: true },
         },
         lifecycleLogs: {
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
         },
       },
     });

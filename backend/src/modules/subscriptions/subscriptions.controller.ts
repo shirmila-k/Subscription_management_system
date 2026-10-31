@@ -2,22 +2,31 @@ import { Request, Response, NextFunction } from 'express';
 import { subscriptionsService } from './subscriptions.service';
 import { sendSuccess, sendError } from '../../utils/response';
 import { SubscriptionStatus, UserRole } from '@prisma/client';
+import {
+  createSubscriptionSchema,
+  pauseSubscriptionSchema,
+  closeSubscriptionSchema,
+  renewSubscriptionSchema,
+  querySubscriptionsSchema,
+} from './subscriptions.validation';
 
 export class SubscriptionsController {
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { status, customerId, search } = req.query;
+      const parsedQuery = querySubscriptionsSchema.safeParse(req.query);
+      const queryParams = parsedQuery.success ? parsedQuery.data : req.query;
 
-      // If customer role, restrict to their own subscriptions
-      let targetCustomerId = customerId as string | undefined;
+      // If customer role, strictly restrict to their own subscriptions
+      let targetCustomerId = queryParams.customerId as string | undefined;
       if (req.user?.role === UserRole.CUSTOMER) {
         targetCustomerId = req.user.id;
       }
 
       const subscriptions = await subscriptionsService.getAllSubscriptions({
         customerId: targetCustomerId,
-        status: status as SubscriptionStatus,
-        search: search as string,
+        planId: queryParams.planId as string,
+        status: queryParams.status as SubscriptionStatus,
+        search: queryParams.search as string,
       });
 
       sendSuccess(res, 'Subscriptions retrieved successfully', subscriptions);
@@ -32,11 +41,11 @@ export class SubscriptionsController {
 
       // Access control check for customers
       if (req.user?.role === UserRole.CUSTOMER && subscription.customerId !== req.user.id) {
-        sendError(res, 'Access denied: not your subscription', 403);
+        sendError(res, 'Access denied: You can only access your own subscriptions', 403);
         return;
       }
 
-      sendSuccess(res, 'Subscription details retrieved', subscription);
+      sendSuccess(res, 'Subscription details retrieved successfully', subscription);
     } catch (error: any) {
       sendError(res, error.message, 404);
     }
@@ -47,13 +56,14 @@ export class SubscriptionsController {
       const customerId =
         req.user?.role === UserRole.CUSTOMER ? req.user.id : req.body.customerId;
 
-      if (!customerId) {
-        sendError(res, 'Customer ID is required', 400);
+      const parsed = createSubscriptionSchema.safeParse({ ...req.body, customerId });
+      if (!parsed.success) {
+        sendError(res, parsed.error.errors[0]?.message || 'Invalid subscription input', 400);
         return;
       }
 
       const subscription = await subscriptionsService.createSubscription(
-        { ...req.body, customerId },
+        parsed.data,
         req.user?.id
       );
 
@@ -93,7 +103,15 @@ export class SubscriptionsController {
 
   async pause(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { reason } = req.body;
+      const parsed = pauseSubscriptionSchema.safeParse(req.body);
+      const reason = parsed.success ? parsed.data.reason : req.body.reason;
+
+      const sub = await subscriptionsService.getSubscriptionById(req.params.id);
+      if (req.user?.role === UserRole.CUSTOMER && sub.customerId !== req.user.id) {
+        sendError(res, 'Access denied: You can only pause your own subscriptions', 403);
+        return;
+      }
+
       const updated = await subscriptionsService.pauseSubscription(req.params.id, reason, req.user?.id);
       sendSuccess(res, 'Subscription paused successfully', updated);
     } catch (error: any) {
@@ -103,6 +121,12 @@ export class SubscriptionsController {
 
   async resume(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const sub = await subscriptionsService.getSubscriptionById(req.params.id);
+      if (req.user?.role === UserRole.CUSTOMER && sub.customerId !== req.user.id) {
+        sendError(res, 'Access denied: You can only resume your own subscriptions', 403);
+        return;
+      }
+
       const updated = await subscriptionsService.resumeSubscription(req.params.id, req.user?.id);
       sendSuccess(res, 'Subscription resumed successfully', updated);
     } catch (error: any) {
@@ -112,9 +136,35 @@ export class SubscriptionsController {
 
   async close(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { reason } = req.body;
+      const parsed = closeSubscriptionSchema.safeParse(req.body);
+      const reason = parsed.success ? parsed.data.reason : req.body.reason;
+
+      const sub = await subscriptionsService.getSubscriptionById(req.params.id);
+      if (req.user?.role === UserRole.CUSTOMER && sub.customerId !== req.user.id) {
+        sendError(res, 'Access denied: You can only close your own subscriptions', 403);
+        return;
+      }
+
       const updated = await subscriptionsService.closeSubscription(req.params.id, reason, req.user?.id);
       sendSuccess(res, 'Subscription closed successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
+    }
+  }
+
+  async renew(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = renewSubscriptionSchema.safeParse(req.body);
+      const autoRenew = parsed.success ? parsed.data.autoRenew : req.body.autoRenew;
+
+      const sub = await subscriptionsService.getSubscriptionById(req.params.id);
+      if (req.user?.role === UserRole.CUSTOMER && sub.customerId !== req.user.id) {
+        sendError(res, 'Access denied: You can only renew your own subscriptions', 403);
+        return;
+      }
+
+      const updated = await subscriptionsService.renewSubscription(req.params.id, req.user?.id, autoRenew);
+      sendSuccess(res, 'Subscription renewed successfully', updated);
     } catch (error: any) {
       sendError(res, error.message, 400);
     }

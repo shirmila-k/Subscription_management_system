@@ -1,11 +1,13 @@
 import prisma from '../../config/db';
 import { invoicesService } from '../invoices/invoices.service';
 import { SubscriptionStatus, InvoiceStatus } from '@prisma/client';
+import { calculateNextBillingPeriod } from '../subscriptions/billing.calculator';
 
 export class BillingJobsService {
   /**
    * 1. Automated Billing Day Invoice Generation
    * Generates invoice for all active subscriptions whose nextBillingDate has arrived
+   * Frequency-aware and handles month-end and leap-year boundaries safely
    */
   async runAutomatedBillingCycle(): Promise<{ processed: number; generatedInvoices: string[] }> {
     console.log('[Cron Job] Starting automated billing cycle execution...');
@@ -29,16 +31,45 @@ export class BillingJobsService {
 
     for (const sub of dueSubscriptions) {
       try {
+        // If subscription has expired and autoRenew is disabled, handle auto-closure or skip billing
+        if (sub.expiryDate && sub.expiryDate <= today && !sub.autoRenew) {
+          if (sub.plan.autoCloseOnExpiry) {
+            await prisma.subscription.update({
+              where: { id: sub.id },
+              data: {
+                status: SubscriptionStatus.CLOSED,
+                closedAt: today,
+                cancellationReason: 'Auto-closed upon reaching expiration date without active auto-renewal',
+              },
+            });
+
+            await prisma.subscriptionLifecycleLog.create({
+              data: {
+                subscriptionId: sub.id,
+                fromStatus: SubscriptionStatus.ACTIVE,
+                toStatus: SubscriptionStatus.CLOSED,
+                action: 'AUTO_CLOSED_ON_EXPIRY',
+                notes: 'Subscription reached expiry date and autoRenew was false during billing run.',
+              },
+            });
+            continue;
+          }
+        }
+
         const invoice = await invoicesService.generateInvoiceForSubscription(sub.id);
         generatedInvoices.push(invoice.invoiceNumber);
 
-        // Advance nextBillingDate by billingCycleDays
-        const nextDate = new Date(sub.nextBillingDate || today);
-        nextDate.setDate(nextDate.getDate() + sub.plan.billingCycleDays);
+        // Advance nextBillingDate using frequency-aware calculator
+        const currentPeriodAnchor = sub.nextBillingDate ? new Date(sub.nextBillingDate) : today;
+        const { nextBillingDate } = calculateNextBillingPeriod(
+          currentPeriodAnchor,
+          sub.plan.billingFrequency,
+          sub.plan.billingCycleDays
+        );
 
         await prisma.subscription.update({
           where: { id: sub.id },
-          data: { nextBillingDate: nextDate },
+          data: { nextBillingDate },
         });
 
         await prisma.subscriptionLifecycleLog.create({
@@ -47,11 +78,11 @@ export class BillingJobsService {
             fromStatus: SubscriptionStatus.ACTIVE,
             toStatus: SubscriptionStatus.ACTIVE,
             action: 'AUTOMATED_BILLING_INVOICED',
-            notes: `Auto-generated Invoice ${invoice.invoiceNumber}. Next billing scheduled for ${nextDate.toISOString().split('T')[0]}`,
+            notes: `Auto-generated Invoice ${invoice.invoiceNumber}. Next billing scheduled for ${nextBillingDate.toISOString().split('T')[0]}`,
           },
         });
-      } catch (err) {
-        console.error(`[Cron Job Error] Failed to generate invoice for subscription ${sub.id}:`, err);
+      } catch (err: any) {
+        console.error(`[Cron Job Notice] Subscription ${sub.id}: ${err.message}`);
       }
     }
 
@@ -85,7 +116,6 @@ export class BillingJobsService {
     console.log(`[Cron Job] Found ${expiringSubscriptions.length} subscriptions expiring within 7 days.`);
 
     for (const sub of expiringSubscriptions) {
-      // In production, dispatch email/SMS notification here
       await prisma.auditLog.create({
         data: {
           action: 'RENEWAL_REMINDER_SENT',
@@ -95,6 +125,7 @@ export class BillingJobsService {
             customerEmail: sub.customer.email,
             expiryDate: sub.expiryDate,
             planName: sub.plan.name,
+            autoRenew: sub.autoRenew,
           },
         },
       });

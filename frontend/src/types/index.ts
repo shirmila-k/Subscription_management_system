@@ -78,12 +78,17 @@ export interface Plan {
   availableTo?: string | null;
   autoCloseOnExpiry: boolean;
   canPause: boolean;
+  canCloseEarly: boolean;
   autoRenew: boolean;
   trialDays: number;
   isActive: boolean;
   product?: Product;
   variant?: ProductVariant;
+  createdAt?: string;
+  updatedAt?: string;
 }
+
+export type Customer = User;
 
 export interface Discount {
   id: string;
@@ -198,6 +203,7 @@ export interface Payment {
     firstName: string;
     lastName: string;
     email: string;
+    companyName?: string | null;
   };
   invoice?: {
     invoiceNumber: string;
@@ -220,23 +226,81 @@ export interface AnalyticsOverview {
     draftSubscriptions: number;
     pausedSubscriptions: number;
     closedSubscriptions: number;
+    cancelledSubscriptions?: number;
     mrr: number;
     arr: number;
+    grossCollectedRevenue?: number;
+    totalRefunded?: number;
+    netCollectedRevenue?: number;
     totalCollectedRevenue: number;
     totalPaymentsCount: number;
+    totalRefundsCount?: number;
     overdueInvoicesCount: number;
     overdueInvoicesAmount: number;
     outstandingBalanceTotal: number;
+    totalInvoiced?: number;
+    realizationRate?: number;
+    arpu?: number;
+    churnRate?: number;
+    activeCustomersCount?: number;
   };
   statusDistribution: Record<string, number>;
   topPlans: {
     planId: string;
     planName: string;
+    billingFrequency?: string;
     price: number;
     subscribersCount: number;
+    estimatedMRR?: number;
   }[];
   recentActivity: any[];
+  dataQuality?: {
+    persistedPaymentsTracked: boolean;
+    hasSufficientHistory: boolean;
+  };
 }
+
+export interface MonthlyRevenueTrendItem {
+  month: string;
+  grossRevenue: number;
+  refunds: number;
+  revenue: number;
+  netRevenue: number;
+  paymentCount: number;
+  refundCount: number;
+}
+
+export interface ChurnAnalytics {
+  totalSubscriptions: number;
+  activeSubscriptions: number;
+  closedSubscriptions: number;
+  cancelledSubscriptions: number;
+  pausedSubscriptions: number;
+  otherSubscriptions: number;
+  churnRatePercentage: number;
+  retentionRatePercentage: number;
+  activeMRR: number;
+  churnedMRRLoss: number;
+  cancellationReasons: { reason: string; count: number }[];
+  insufficientHistory: boolean;
+}
+
+export interface PaymentMethodItem {
+  method: string;
+  grossCollected: number;
+  refundedAmount: number;
+  netCollected: number;
+  transactionCount: number;
+  successCount: number;
+  refundCount: number;
+  percentage: number;
+}
+
+export interface PaymentMethodBreakdownResponse {
+  totalNetCollected: number;
+  methods: PaymentMethodItem[];
+}
+
 
 export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CONVERTED';
 

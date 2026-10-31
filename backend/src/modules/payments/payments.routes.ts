@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { paymentsController } from './payments.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
+import { authenticate, requireStaffOrAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
@@ -19,6 +19,11 @@ router.get('/:id', (req, res, next) => {
 // Record a payment against an invoice
 router.post('/', (req, res, next) => {
   paymentsController.recordPayment(req, res, next);
+});
+
+// Refund a payment (Admin/Staff only)
+router.post('/:id/refund', requireStaffOrAdmin, (req, res, next) => {
+  paymentsController.refund(req, res, next);
 });
 
 // Process Razorpay transaction reconciliation

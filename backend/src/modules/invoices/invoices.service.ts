@@ -1,22 +1,24 @@
 import prisma from '../../config/db';
-import { InvoiceStatus, PaymentTerms } from '@prisma/client';
+import { InvoiceStatus, PaymentTerms, SubscriptionStatus } from '@prisma/client';
 import { pdfService } from './pdf.service';
+import { calculateNextBillingPeriod, calculateMonetaryBreakdown } from '../subscriptions/billing.calculator';
 
 export class InvoicesService {
   /**
-   * Helper to generate unique invoice numbers
+   * Helper to generate unique invoice numbers: INV-YYYY-XXXXX
    */
   private async generateInvoiceNumber(): Promise<string> {
     const year = new Date().getFullYear();
     const count = await prisma.invoice.count();
-    const sequence = (count + 1).toString().padStart(5, '0');
-    return `INV-${year}-${sequence}`;
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    const sequence = (count + 1).toString().padStart(4, '0');
+    return `INV-${year}-${sequence}-${rand}`;
   }
 
   /**
    * Helper to calculate invoice due date based on payment terms
    */
-  private computeDueDate(issueDate: Date, terms: PaymentTerms): Date {
+  computeDueDate(issueDate: Date, terms: PaymentTerms): Date {
     const due = new Date(issueDate);
     switch (terms) {
       case PaymentTerms.IMMEDIATE:
@@ -38,30 +40,118 @@ export class InvoicesService {
 
   /**
    * Automatically generate an invoice from an active or confirmed subscription
+   * Prevents duplicate invoices for the same subscription and billing period.
    */
-  async generateInvoiceForSubscription(subscriptionId: string) {
+  async generateInvoiceForSubscription(subscriptionId: string, customPeriodStart?: Date) {
     const sub = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
         customer: true,
+        items: {
+          include: { product: true, variant: true, plan: true },
+        },
         plan: {
           include: { product: true, variant: true },
         },
       },
     });
 
-    if (!sub) throw new Error('Subscription not found');
+    if (!sub) {
+      throw new Error(`Subscription with ID '${subscriptionId}' not found`);
+    }
+
+    if (sub.status === SubscriptionStatus.CLOSED || sub.status === SubscriptionStatus.CANCELLED) {
+      throw new Error(`Cannot generate invoice for a subscription that is '${sub.status}'`);
+    }
 
     const issueDate = new Date();
     const dueDate = this.computeDueDate(issueDate, sub.paymentTerms);
 
-    const billingPeriodStart = sub.nextBillingDate ? new Date(sub.nextBillingDate) : new Date(sub.startDate);
-    const billingPeriodEnd = new Date(billingPeriodStart);
-    billingPeriodEnd.setDate(billingPeriodEnd.getDate() + sub.plan.billingCycleDays);
+    // Calculate billing period boundaries using frequency-aware calculator
+    const periodStart = customPeriodStart
+      ? new Date(customPeriodStart)
+      : sub.nextBillingDate
+      ? new Date(sub.nextBillingDate)
+      : new Date(sub.startDate);
+
+    const { periodEnd, nextBillingDate } = calculateNextBillingPeriod(
+      periodStart,
+      sub.plan.billingFrequency,
+      sub.plan.billingCycleDays
+    );
+
+    // DUPLICATE INVOICE PREVENTION:
+    // Check if an active/confirmed/paid invoice already exists for this subscription covering the current/same billing period
+    const existingDuplicate = await prisma.invoice.findFirst({
+      where: {
+        subscriptionId: sub.id,
+        status: { not: InvoiceStatus.VOID },
+        OR: [
+          {
+            billingPeriodStart: {
+              gte: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()),
+              lt: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + 1),
+            },
+          },
+          {
+            billingPeriodEnd: {
+              gt: new Date(),
+            },
+          },
+        ],
+      },
+    });
+
+    if (existingDuplicate) {
+      throw new Error(
+        `Duplicate invoice prevented: An active invoice '${existingDuplicate.invoiceNumber}' already exists for subscription '${sub.subscriptionNumber}' covering billing period until ${existingDuplicate.billingPeriodEnd.toISOString().split('T')[0]}`
+      );
+    }
 
     const invoiceNumber = await this.generateInvoiceNumber();
-    const variantDesc = sub.plan.variant ? ` (${sub.plan.variant.name})` : '';
-    const itemDescription = `${sub.plan.product.name}${variantDesc} - ${sub.plan.name} Plan [Billing cycle: ${sub.plan.billingCycleDays} days]`;
+
+    // Line items creation from stored SubscriptionItem records
+    let lineItemsData: Array<{
+      description: string;
+      quantity: number;
+      unitPrice: number;
+      taxAmount: number;
+      discountAmount: number;
+      amount: number;
+      lineTotal: number;
+    }> = [];
+
+    if (sub.items && sub.items.length > 0) {
+      lineItemsData = sub.items.map((item) => {
+        const itemQty = item.quantity || 1;
+        const itemUnitPrice = Number(item.unitPrice);
+        const itemLineTotal = Number(item.lineTotal || itemUnitPrice * itemQty);
+        return {
+          description: item.description,
+          quantity: itemQty,
+          unitPrice: itemUnitPrice,
+          taxAmount: 0,
+          discountAmount: 0,
+          amount: itemLineTotal,
+          lineTotal: itemLineTotal,
+        };
+      });
+    } else {
+      const variantDesc = sub.plan.variant ? ` (${sub.plan.variant.name})` : '';
+      const fallbackDesc = `${sub.plan.product.name}${variantDesc} - ${sub.plan.name} [Frequency: ${sub.plan.billingFrequency}]`;
+      const fallbackSubtotal = Number(sub.subtotal);
+      lineItemsData = [
+        {
+          description: fallbackDesc,
+          quantity: sub.quantity,
+          unitPrice: Number(sub.unitPrice),
+          taxAmount: Number(sub.taxAmount),
+          discountAmount: Number(sub.discountAmount),
+          amount: fallbackSubtotal,
+          lineTotal: fallbackSubtotal,
+        },
+      ];
+    }
 
     const subtotal = Number(sub.subtotal);
     const discountAmount = Number(sub.discountAmount);
@@ -69,42 +159,64 @@ export class InvoicesService {
     const taxAmount = Number(sub.taxAmount);
     const totalAmount = Number(sub.totalAmount);
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        subscriptionId: sub.id,
-        customerId: sub.customerId,
-        status: InvoiceStatus.CONFIRMED,
-        issueDate,
-        dueDate,
-        billingPeriodStart,
-        billingPeriodEnd,
-        subtotal,
-        taxRate,
-        taxAmount,
-        discountAmount,
-        totalAmount,
-        amountPaid: 0,
-        balanceDue: totalAmount,
-        items: {
-          create: [
-            {
-              description: itemDescription,
-              quantity: sub.quantity,
-              unitPrice: sub.unitPrice,
-              amount: subtotal,
-            },
-          ],
+    return prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          subscriptionId: sub.id,
+          customerId: sub.customerId,
+          status: InvoiceStatus.CONFIRMED,
+          issueDate,
+          dueDate,
+          billingPeriodStart: periodStart,
+          billingPeriodEnd: periodEnd,
+          subtotal,
+          taxRate,
+          taxAmount,
+          discountAmount,
+          totalAmount,
+          amountPaid: 0,
+          balanceDue: totalAmount,
+          notes: sub.notes ? `Subscription: ${sub.subscriptionNumber}. ${sub.notes}` : `Subscription: ${sub.subscriptionNumber}`,
+          items: {
+            create: lineItemsData.map((li) => ({
+              description: li.description,
+              quantity: li.quantity,
+              unitPrice: li.unitPrice,
+              taxAmount: li.taxAmount,
+              discountAmount: li.discountAmount,
+              amount: li.amount,
+              lineTotal: li.lineTotal,
+            })),
+          },
         },
-      },
-      include: {
-        customer: true,
-        items: true,
-        subscription: true,
-      },
-    });
+        include: {
+          customer: true,
+          items: true,
+          subscription: true,
+        },
+      });
 
-    return invoice;
+      // Update subscription next billing date if not set or if current period has caught up
+      if (!sub.nextBillingDate || sub.nextBillingDate <= periodStart) {
+        await tx.subscription.update({
+          where: { id: sub.id },
+          data: { nextBillingDate },
+        });
+      }
+
+      await tx.subscriptionLifecycleLog.create({
+        data: {
+          subscriptionId: sub.id,
+          fromStatus: sub.status,
+          toStatus: sub.status,
+          action: 'INVOICE_GENERATED',
+          notes: `Invoice ${invoiceNumber} generated for period ${periodStart.toISOString().split('T')[0]} to ${periodEnd.toISOString().split('T')[0]}. Total: ₹${totalAmount.toFixed(2)}`,
+        },
+      });
+
+      return invoice;
+    });
   }
 
   /**
@@ -125,6 +237,7 @@ export class InvoicesService {
         { invoiceNumber: { contains: params.search } },
         { customer: { email: { contains: params.search } } },
         { customer: { companyName: { contains: params.search } } },
+        { subscription: { subscriptionNumber: { contains: params.search } } },
       ];
     }
 
@@ -132,10 +245,10 @@ export class InvoicesService {
       where,
       include: {
         customer: {
-          select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
+          select: { id: true, firstName: true, lastName: true, email: true, companyName: true, address: true, taxId: true },
         },
         subscription: {
-          select: { subscriptionNumber: true, status: true },
+          select: { subscriptionNumber: true, status: true, paymentTerms: true },
         },
         items: true,
         payments: true,
@@ -153,7 +266,10 @@ export class InvoicesService {
       include: {
         customer: true,
         subscription: {
-          include: { plan: { include: { product: true } } },
+          include: {
+            plan: { include: { product: true, variant: true } },
+            items: true,
+          },
         },
         items: true,
         payments: {
@@ -208,12 +324,28 @@ export class InvoicesService {
   }
 
   /**
-   * Update invoice status
+   * Update invoice status with safety checks
    */
-  async updateStatus(id: string, status: InvoiceStatus) {
+  async updateStatus(id: string, status: InvoiceStatus, notes?: string) {
+    const invoice = await prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) throw new Error(`Invoice with ID '${id}' not found`);
+
+    if (status === InvoiceStatus.VOID) {
+      if (Number(invoice.amountPaid) > 0) {
+        throw new Error(
+          `Cannot void invoice '${invoice.invoiceNumber}' with ₹${Number(invoice.amountPaid).toFixed(2)} in recorded payments. Refund all payments first.`
+        );
+      }
+    }
+
     return prisma.invoice.update({
       where: { id },
-      data: { status },
+      data: {
+        status,
+        notes: notes ? `${invoice.notes || ''}\n[Status Change]: ${notes}` : invoice.notes,
+        ...(status === InvoiceStatus.VOID && { balanceDue: 0 }),
+      },
+      include: { customer: true, items: true, payments: true },
     });
   }
 }

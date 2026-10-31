@@ -47,4 +47,12 @@ router.post('/:id/close', (req, res, next) => {
   subscriptionsController.close(req, res, next);
 });
 
+router.post('/:id/cancel', (req, res, next) => {
+  subscriptionsController.close(req, res, next);
+});
+
+router.post('/:id/renew', (req, res, next) => {
+  subscriptionsController.renew(req, res, next);
+});
+
 export default router;

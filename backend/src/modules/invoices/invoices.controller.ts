@@ -2,22 +2,24 @@ import { Request, Response, NextFunction } from 'express';
 import { invoicesService } from './invoices.service';
 import { sendSuccess, sendError } from '../../utils/response';
 import { InvoiceStatus, UserRole } from '@prisma/client';
+import { generateInvoiceSchema, updateInvoiceStatusSchema, queryInvoicesSchema } from './invoices.validation';
 
 export class InvoicesController {
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { customerId, subscriptionId, status, search } = req.query;
+      const parsedQuery = queryInvoicesSchema.safeParse(req.query);
+      const queryParams = parsedQuery.success ? parsedQuery.data : req.query;
 
-      let targetCustomerId = customerId as string | undefined;
+      let targetCustomerId = queryParams.customerId as string | undefined;
       if (req.user?.role === UserRole.CUSTOMER) {
         targetCustomerId = req.user.id;
       }
 
       const invoices = await invoicesService.getAllInvoices({
         customerId: targetCustomerId,
-        subscriptionId: subscriptionId as string,
-        status: status as InvoiceStatus,
-        search: search as string,
+        subscriptionId: queryParams.subscriptionId as string,
+        status: queryParams.status as InvoiceStatus,
+        search: queryParams.search as string,
       });
 
       sendSuccess(res, 'Invoices retrieved successfully', invoices);
@@ -31,7 +33,7 @@ export class InvoicesController {
       const invoice = await invoicesService.getInvoiceById(req.params.id);
 
       if (req.user?.role === UserRole.CUSTOMER && invoice.customerId !== req.user.id) {
-        sendError(res, 'Access denied: not your invoice', 403);
+        sendError(res, 'Access denied: You can only access your own invoices', 403);
         return;
       }
 
@@ -43,12 +45,13 @@ export class InvoicesController {
 
   async generateForSubscription(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { subscriptionId } = req.body;
-      if (!subscriptionId) {
-        sendError(res, 'Subscription ID is required', 400);
+      const parsed = generateInvoiceSchema.safeParse(req.body);
+      if (!parsed.success) {
+        sendError(res, parsed.error.errors[0]?.message || 'Invalid input', 400);
         return;
       }
-      const invoice = await invoicesService.generateInvoiceForSubscription(subscriptionId);
+
+      const invoice = await invoicesService.generateInvoiceForSubscription(parsed.data.subscriptionId);
       sendSuccess(res, 'Invoice generated successfully', invoice, 201);
     } catch (error: any) {
       sendError(res, error.message, 400);
@@ -57,6 +60,13 @@ export class InvoicesController {
 
   async downloadPdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const invoice = await invoicesService.getInvoiceById(req.params.id);
+
+      if (req.user?.role === UserRole.CUSTOMER && invoice.customerId !== req.user.id) {
+        sendError(res, 'Access denied: You can only download your own invoices', 403);
+        return;
+      }
+
       const { buffer, filename } = await invoicesService.getInvoicePdfBuffer(req.params.id);
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -69,9 +79,14 @@ export class InvoicesController {
 
   async updateStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { status } = req.body;
-      const updated = await invoicesService.updateStatus(req.params.id, status as InvoiceStatus);
-      sendSuccess(res, 'Invoice status updated', updated);
+      const parsed = updateInvoiceStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        sendError(res, parsed.error.errors[0]?.message || 'Invalid input', 400);
+        return;
+      }
+
+      const updated = await invoicesService.updateStatus(req.params.id, parsed.data.status, parsed.data.notes);
+      sendSuccess(res, 'Invoice status updated successfully', updated);
     } catch (error: any) {
       sendError(res, error.message, 400);
     }

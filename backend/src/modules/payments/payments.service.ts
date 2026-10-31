@@ -1,5 +1,5 @@
 import prisma from '../../config/db';
-import { PaymentMethod, PaymentStatus, InvoiceStatus } from '@prisma/client';
+import { PaymentMethod, PaymentStatus, InvoiceStatus, UserRole } from '@prisma/client';
 
 export interface RecordPaymentInput {
   invoiceId: string;
@@ -15,19 +15,30 @@ export class PaymentsService {
   private async generatePaymentNumber(): Promise<string> {
     const year = new Date().getFullYear();
     const count = await prisma.payment.count();
-    const sequence = (count + 1).toString().padStart(5, '0');
-    return `PAY-${year}-${sequence}`;
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    const sequence = (count + 1).toString().padStart(4, '0');
+    return `PAY-${year}-${sequence}-${rand}`;
   }
 
   /**
-   * Record a payment against an invoice and reconcile balances
+   * Record a payment against an invoice and reconcile balances atomically
    */
-  async recordPayment(input: RecordPaymentInput, customerId?: string) {
+  async recordPayment(
+    input: RecordPaymentInput,
+    performedByUserId?: string,
+    userRole?: UserRole
+  ) {
     const invoice = await prisma.invoice.findUnique({
       where: { id: input.invoiceId },
+      include: { customer: true },
     });
 
     if (!invoice) throw new Error('Target invoice not found');
+
+    // Access control: If a customer is recording payment, ensure it belongs to them
+    if (userRole === UserRole.CUSTOMER && invoice.customerId !== performedByUserId) {
+      throw new Error('Unauthorized: You can only record payments for your own invoices');
+    }
 
     if (invoice.status === InvoiceStatus.PAID) {
       throw new Error('This invoice is already fully paid');
@@ -37,7 +48,7 @@ export class PaymentsService {
       throw new Error('Cannot apply payment to a void invoice');
     }
 
-    const payAmount = Number(input.amount);
+    const payAmount = Math.round(Number(input.amount) * 100) / 100;
     if (payAmount <= 0) {
       throw new Error('Payment amount must be greater than zero');
     }
@@ -45,33 +56,46 @@ export class PaymentsService {
     const currentBalance = Number(invoice.balanceDue);
     if (payAmount > currentBalance + 0.01) {
       throw new Error(
-        `Payment amount ($${payAmount.toFixed(2)}) exceeds remaining balance ($${currentBalance.toFixed(2)})`
+        `Payment amount (₹${payAmount.toFixed(2)}) exceeds remaining balance (₹${currentBalance.toFixed(2)})`
       );
+    }
+
+    // DUPLICATE PAYMENT PREVENTION:
+    // If a transaction reference is provided, ensure it was not already processed
+    if (input.transactionReference && input.transactionReference.trim().length > 0) {
+      const existingPayment = await prisma.payment.findUnique({
+        where: { transactionReference: input.transactionReference.trim() },
+      });
+      if (existingPayment) {
+        throw new Error(
+          `Duplicate payment prevented: A payment with reference '${input.transactionReference}' already exists (ID: ${existingPayment.paymentNumber})`
+        );
+      }
     }
 
     const paymentNumber = await this.generatePaymentNumber();
 
-    // Use transaction to ensure payment record and invoice update are atomic
+    // Use transaction to ensure payment record creation and invoice balance update are atomic
     return prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
           paymentNumber,
           invoiceId: invoice.id,
-          customerId: customerId || invoice.customerId,
+          customerId: invoice.customerId,
           amount: payAmount,
-          currency: input.currency || 'USD',
+          currency: input.currency || 'INR',
           paymentMethod: input.paymentMethod,
           status: PaymentStatus.SUCCESS,
           paymentDate: new Date(),
-          transactionReference: input.transactionReference,
+          transactionReference: input.transactionReference?.trim() || null,
           notes: input.notes,
           gatewayResponse: input.gatewayResponse || undefined,
         },
       });
 
-      const updatedAmountPaid = Number(invoice.amountPaid) + payAmount;
-      const updatedBalanceDue = Math.max(0, currentBalance - payAmount);
-      const isFullyPaid = updatedBalanceDue <= 0;
+      const updatedAmountPaid = Math.round((Number(invoice.amountPaid) + payAmount) * 100) / 100;
+      const updatedBalanceDue = Math.max(0, Math.round((currentBalance - payAmount) * 100) / 100);
+      const isFullyPaid = updatedBalanceDue <= 0.001;
 
       await tx.invoice.update({
         where: { id: invoice.id },
@@ -82,31 +106,97 @@ export class PaymentsService {
         },
       });
 
+      await tx.auditLog.create({
+        data: {
+          userId: performedByUserId || null,
+          action: 'PAYMENT_RECORDED',
+          entity: 'PAYMENT',
+          entityId: payment.id,
+          metadata: {
+            paymentNumber,
+            invoiceNumber: invoice.invoiceNumber,
+            amount: payAmount,
+            remainingBalance: updatedBalanceDue,
+            isFullyPaid,
+          },
+        },
+      });
+
       return payment;
     });
   }
 
   /**
-   * Handle Razorpay webhook or simulated signature matching
+   * Refund a previously successful payment
    */
-  async processRazorpayPayment(payload: {
-    razorpay_payment_id: string;
-    razorpay_order_id?: string;
-    invoiceId: string;
-    amount: number;
-    notes?: string;
-  }, customerId: string) {
-    return this.recordPayment(
-      {
-        invoiceId: payload.invoiceId,
-        amount: payload.amount,
-        paymentMethod: PaymentMethod.RAZORPAY,
-        transactionReference: payload.razorpay_payment_id,
-        notes: payload.notes || `Razorpay transaction ${payload.razorpay_payment_id}`,
-        gatewayResponse: payload,
-      },
-      customerId
-    );
+  async refundPayment(paymentId: string, reason?: string, performedByUserId?: string) {
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { invoice: true },
+    });
+
+    if (!payment) throw new Error('Payment record not found');
+
+    if (payment.status === PaymentStatus.REFUNDED) {
+      throw new Error('This payment has already been refunded');
+    }
+
+    if (payment.status !== PaymentStatus.SUCCESS) {
+      throw new Error(`Cannot refund payment in '${payment.status}' status`);
+    }
+
+    const refundAmount = Number(payment.amount);
+    const invoice = payment.invoice;
+
+    return prisma.$transaction(async (tx) => {
+      const updatedPayment = await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.REFUNDED,
+          notes: reason
+            ? `${payment.notes || ''}\n[Refund Reason]: ${reason}`
+            : `${payment.notes || ''}\n[Refunded on ${new Date().toISOString()}]`,
+        },
+      });
+
+      // Restore invoice balance
+      const newAmountPaid = Math.max(0, Math.round((Number(invoice.amountPaid) - refundAmount) * 100) / 100);
+      const newBalanceDue = Math.round((Number(invoice.balanceDue) + refundAmount) * 100) / 100;
+
+      // If the invoice was marked PAID, restore it to CONFIRMED (or OVERDUE if past due)
+      let restoredStatus = invoice.status;
+      if (invoice.status === InvoiceStatus.PAID) {
+        const isPastDue = invoice.dueDate < new Date();
+        restoredStatus = isPastDue ? InvoiceStatus.OVERDUE : InvoiceStatus.CONFIRMED;
+      }
+
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          amountPaid: newAmountPaid,
+          balanceDue: newBalanceDue,
+          status: restoredStatus,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: performedByUserId || null,
+          action: 'PAYMENT_REFUNDED',
+          entity: 'PAYMENT',
+          entityId: payment.id,
+          metadata: {
+            paymentNumber: payment.paymentNumber,
+            invoiceNumber: invoice.invoiceNumber,
+            refundAmount,
+            restoredBalanceDue: newBalanceDue,
+            reason,
+          },
+        },
+      });
+
+      return updatedPayment;
+    });
   }
 
   /**
@@ -121,10 +211,10 @@ export class PaymentsService {
       where,
       include: {
         customer: {
-          select: { id: true, firstName: true, lastName: true, email: true },
+          select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
         },
         invoice: {
-          select: { invoiceNumber: true, totalAmount: true, status: true },
+          select: { invoiceNumber: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true },
         },
       },
       orderBy: { paymentDate: 'desc' },

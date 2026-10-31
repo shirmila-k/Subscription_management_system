@@ -16,19 +16,20 @@ export const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const [stats, setStats] = useState<DashboardStats>({
-    activeCount: 2486,
-    mrr: 1842500,
-    outstandingAmount: 284600,
-    overdueCount: 28,
-    executionTimeMs: 42,
+    activeCount: 0,
+    mrr: 0,
+    outstandingAmount: 0,
+    overdueCount: 0,
+    executionTimeMs: 0,
   });
 
+  const [realSubscriptions, setRealSubscriptions] = useState<any[]>([]);
   const [timeRange, setTimeRange] = useState<'7D' | '30D' | '3M' | '1Y' | 'All'>('30D');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Pending' | 'Paused' | 'Closed'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Demo subscriptions matching Stitch
+  // Fallback demo subscriptions for visual completeness when no records exist
   const demoSubscriptions = [
     {
       id: 'SUB-9402',
@@ -108,19 +109,24 @@ export const AdminDashboard: React.FC = () => {
     const fetchRealData = async () => {
       try {
         setLoading(true);
-        const res = await analyticsService.getOverview();
+        const [res, subs] = await Promise.all([
+          analyticsService.getOverview().catch(() => null),
+          subscriptionService.getSubscriptions().catch(() => []),
+        ]);
         if (res && res.kpis) {
           setStats({
-            activeCount: res.kpis.activeSubscriptions || 2486,
-            mrr: res.kpis.mrr || 1842500,
-            outstandingAmount: res.kpis.outstandingBalanceTotal || 284600,
-            overdueCount: res.kpis.overdueInvoicesCount || 28,
-            executionTimeMs: res.executionTimeMs || 38,
+            activeCount: res.kpis.activeSubscriptions ?? 0,
+            mrr: res.kpis.mrr ?? 0,
+            outstandingAmount: res.kpis.outstandingBalanceTotal ?? 0,
+            overdueCount: res.kpis.overdueInvoicesCount ?? 0,
+            executionTimeMs: res.executionTimeMs ?? 0,
           });
         }
+        if (subs && subs.length > 0) {
+          setRealSubscriptions(subs);
+        }
       } catch (err) {
-        // Fallback gracefully to high-fidelity Stitch demonstration figures
-        console.info('Backend analytics API offline or empty, using Stitch demo metrics');
+        console.info('Backend analytics API offline or empty');
       } finally {
         setLoading(false);
       }
@@ -129,7 +135,30 @@ export const AdminDashboard: React.FC = () => {
     fetchRealData();
   }, []);
 
-  const filteredSubscriptions = demoSubscriptions.filter((sub) => {
+  const handleExportCsv = async () => {
+    try {
+      await analyticsService.downloadFinancialReportCsv();
+    } catch {
+      alert('Could not export financial report');
+    }
+  };
+
+  const mappedSubscriptions = realSubscriptions.length > 0
+    ? realSubscriptions.map((s) => ({
+        id: s.subscriptionNumber || s.id,
+        customer: s.customer ? `${s.customer.firstName} ${s.customer.lastName}`.trim() : 'Direct Client',
+        email: s.customer?.email || 'N/A',
+        initials: (s.customer?.firstName?.[0] || 'C') + (s.customer?.lastName?.[0] || 'L'),
+        plan: s.plan?.name || 'Standard Plan',
+        cycle: s.plan?.billingFrequency || 'MONTHLY',
+        amount: `₹${Number(s.totalAmount || 0).toLocaleString('en-IN')}`,
+        nextBilling: s.nextBillingDate ? new Date(s.nextBillingDate).toLocaleDateString('en-IN') : 'N/A',
+        status: s.status,
+        statusColor: s.status === 'ACTIVE' ? 'emerald' : s.status === 'PAUSED' ? 'slate' : 'amber',
+      }))
+    : demoSubscriptions;
+
+  const filteredSubscriptions = mappedSubscriptions.filter((sub) => {
     const matchesFilter =
       statusFilter === 'All' ? true : sub.status.toLowerCase().includes(statusFilter.toLowerCase());
     const matchesSearch =
@@ -174,7 +203,7 @@ export const AdminDashboard: React.FC = () => {
           {/* Export CSV Button */}
           <button
             type="button"
-            onClick={() => alert('Exporting billing telemetry to CSV...')}
+            onClick={handleExportCsv}
             className="flex items-center gap-1.5 bg-white text-[#1f1924] px-3.5 py-2 rounded-lg border border-[#EAE5EC] shadow-xs hover:bg-[#FAF9FB] transition text-xs font-medium"
           >
             <span className="material-symbols-outlined text-[18px] text-[#81737e]">download</span>
