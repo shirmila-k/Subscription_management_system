@@ -57,11 +57,19 @@ export class InvoicesController {
 
   async downloadPdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { buffer, filename } = await invoicesService.getInvoicePdfBuffer(req.params.id);
+      const invoice = await invoicesService.getInvoiceById(req.params.id);
+
+      if (req.user?.role === UserRole.CUSTOMER && invoice.customerId !== req.user.id) {
+        sendError(res, 'Access denied: not your invoice', 403);
+        return;
+      }
+
+      const { buffer, filename } = await invoicesService.getInvoicePdfBuffer(invoice.id);
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(buffer);
+      res.setHeader('Content-Length', buffer.length.toString());
+      res.status(200).end(buffer);
     } catch (error: any) {
       sendError(res, error.message, 404);
     }

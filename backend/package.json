@@ -12,7 +12,7 @@
     "prisma:push": "npx prisma db push",
     "prisma:studio": "npx prisma studio",
     "prisma:seed": "npx tsx prisma/seed.ts",
-    "test": "npx tsx --test src/modules/auth/auth.test.ts"
+    "test": "npx tsx --test src/modules/auth/auth.test.ts src/modules/analytics/analytics.test.ts"
   },
   "keywords": ["subscription-management", "express", "typescript", "prisma", "mysql"],
   "author": "Brightloop Software",

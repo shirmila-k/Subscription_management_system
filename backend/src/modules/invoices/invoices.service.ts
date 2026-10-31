@@ -145,11 +145,13 @@ export class InvoicesService {
   }
 
   /**
-   * Fetch invoice by ID
+   * Fetch invoice by ID or invoice number
    */
   async getInvoiceById(id: string) {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id },
+    const invoice = await prisma.invoice.findFirst({
+      where: {
+        OR: [{ id }, { invoiceNumber: id }],
+      },
       include: {
         customer: true,
         subscription: {
@@ -203,7 +205,7 @@ export class InvoicesService {
 
     return {
       buffer: pdfBuffer,
-      filename: `${invoice.invoiceNumber}.pdf`,
+      filename: `invoice-${invoice.id}.pdf`,
     };
   }
 

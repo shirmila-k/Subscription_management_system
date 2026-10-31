@@ -88,6 +88,38 @@ export const api = {
   generateInvoice: (subscriptionId: string) =>
     request<any>('/invoices/generate', { method: 'POST', body: JSON.stringify({ subscriptionId }) }),
   getInvoicePdfUrl: (id: string) => `${API_BASE}/invoices/${id}/pdf`,
+  downloadInvoicePdf: async (id: string, filename?: string): Promise<void> => {
+    const token = localStorage.getItem('brightloop_token');
+    const response = await fetch(`${API_BASE}/invoices/${id}/pdf`, {
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.message || `Failed to download invoice PDF (status ${response.status})`);
+    }
+
+    let downloadFilename = filename || `invoice-${id}.pdf`;
+    const disposition = response.headers.get('Content-Disposition');
+    if (!filename && disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) {
+        downloadFilename = match[1];
+      }
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = downloadFilename;
+    document.body.appendChild(link);
+    link.click();
+    window.URL.revokeObjectURL(downloadUrl);
+    document.body.removeChild(link);
+  },
 
   // Payments
   getPayments: (params?: any) => {

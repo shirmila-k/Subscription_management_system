@@ -10,6 +10,11 @@ import {
   Quotation,
   QuotationTemplate,
   AnalyticsOverview,
+  RevenueAnalytics,
+  SubscriptionAnalytics,
+  CustomerAnalytics,
+  BillingAnalytics,
+  ProductAnalytics,
 } from '../types';
 
 export const authService = {
@@ -147,9 +152,38 @@ export const invoiceService = {
   generateInvoice: (subscriptionId: string) =>
     axiosClient.post<Invoice>('/invoices/generate', { subscriptionId }) as unknown as Promise<Invoice>,
   getPdfUrl: (id: string) => `${axiosClient.defaults.baseURL}/invoices/${id}/pdf`,
-  downloadPdf: (id: string) => {
-    const url = `${axiosClient.defaults.baseURL}/invoices/${id}/pdf`;
-    window.open(url, '_blank');
+  downloadPdf: async (id: string, customFilename?: string): Promise<void> => {
+    const token = localStorage.getItem('brightloop_token');
+    const baseURL = axiosClient.defaults.baseURL || '/api/v1';
+    const response = await fetch(`${baseURL}/invoices/${id}/pdf`, {
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.message || `Failed to download invoice PDF (status ${response.status})`);
+    }
+
+    let filename = customFilename || `invoice-${id}.pdf`;
+    const disposition = response.headers.get('Content-Disposition');
+    if (!customFilename && disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    window.URL.revokeObjectURL(downloadUrl);
+    document.body.removeChild(link);
   },
 };
 
@@ -184,8 +218,8 @@ export const discountService = {
 };
 
 export const analyticsService = {
-  getOverview: async () => {
-    const res = await (axiosClient.get<AnalyticsOverview>('/analytics/overview') as unknown as Promise<AnalyticsOverview>);
+  getOverview: async (params?: any): Promise<AnalyticsOverview> => {
+    const res = await (axiosClient.get<AnalyticsOverview>('/analytics/overview', { params }) as unknown as Promise<AnalyticsOverview>);
     if (res && res.kpis) {
       res.mrr = res.kpis.mrr;
       res.arr = res.kpis.arr;
@@ -195,8 +229,78 @@ export const analyticsService = {
     }
     return res;
   },
-  getRevenueTrend: () =>
-    axiosClient.get<any[]>('/analytics/revenue-trend') as unknown as Promise<any[]>,
+
+  getRevenue: (params?: any): Promise<RevenueAnalytics> => {
+    return axiosClient.get<RevenueAnalytics>('/analytics/revenue', { params }) as unknown as Promise<RevenueAnalytics>;
+  },
+
+  getSubscriptions: (params?: any): Promise<SubscriptionAnalytics> => {
+    return axiosClient.get<SubscriptionAnalytics>('/analytics/subscriptions', { params }) as unknown as Promise<SubscriptionAnalytics>;
+  },
+
+  getCustomers: (params?: any): Promise<CustomerAnalytics> => {
+    return axiosClient.get<CustomerAnalytics>('/analytics/customers', { params }) as unknown as Promise<CustomerAnalytics>;
+  },
+
+  getBilling: (params?: any): Promise<BillingAnalytics> => {
+    return axiosClient.get<BillingAnalytics>('/analytics/billing', { params }) as unknown as Promise<BillingAnalytics>;
+  },
+
+  getProducts: (): Promise<ProductAnalytics> => {
+    return axiosClient.get<ProductAnalytics>('/analytics/products') as unknown as Promise<ProductAnalytics>;
+  },
+
+  getRevenueTrend: (months = 6): Promise<any[]> => {
+    return axiosClient.get<any[]>('/analytics/revenue-trend', { params: { months } }) as unknown as Promise<any[]>;
+  },
+
+  downloadCsv: async (type = 'summary', params?: any) => {
+    const token = localStorage.getItem('brightloop_token');
+    const query = new URLSearchParams({ type, ...params }).toString();
+    const response = await fetch(`/api/v1/analytics/export/csv?${query}`, {
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate CSV export');
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brightloop-${type}-report-${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
+  downloadPdf: async (params?: any) => {
+    const token = localStorage.getItem('brightloop_token');
+    const query = new URLSearchParams(params).toString();
+    const response = await fetch(`/api/v1/analytics/export/pdf${query ? `?${query}` : ''}`, {
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate PDF report');
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brightloop-executive-analytics-${Date.now()}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
 };
 
 export const customerService = {

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { invoiceService } from '../../services';
 
 interface CustInvoice {
   id: string;
@@ -53,16 +54,48 @@ const CUSTOMER_INVOICES: CustInvoice[] = [
 ];
 
 export const CustomerInvoices: React.FC = () => {
-  const [invoices] = useState<CustInvoice[]>(CUSTOMER_INVOICES);
+  const [invoices, setInvoices] = useState<CustInvoice[]>(CUSTOMER_INVOICES);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoiceService
+      .getAll()
+      .then((data) => {
+        if (data && data.length > 0) {
+          setInvoices(
+            data.map((inv: any) => ({
+              id: inv.id,
+              invoiceNo: inv.invoiceNumber,
+              issueDate: new Date(inv.issueDate).toLocaleDateString(),
+              dueDate: new Date(inv.dueDate).toLocaleDateString(),
+              subtotal: Number(inv.subtotal),
+              taxAmount: Number(inv.taxAmount),
+              totalAmount: Number(inv.totalAmount),
+              amountPaid: Number(inv.amountPaid),
+              balanceDue: Number(inv.balanceDue),
+              status: inv.status,
+            }))
+          );
+        }
+      })
+      .catch(() => {
+        // Fallback to sample data
+      });
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const downloadPdf = (invNo: string) => {
-    showToast(`Downloading official GST Tax Invoice PDF for ${invNo}...`);
+  const downloadPdf = async (invIdOrNo: string) => {
+    showToast(`Downloading official GST Tax Invoice PDF for ${invIdOrNo}...`);
+    try {
+      await invoiceService.downloadPdf(invIdOrNo, `invoice-${invIdOrNo}.pdf`);
+      showToast(`Invoice ${invIdOrNo} downloaded successfully!`);
+    } catch (e: any) {
+      showToast(`Download failed: ${e.message || 'Unable to retrieve PDF'}`);
+    }
   };
 
   return (
@@ -145,7 +178,7 @@ export const CustomerInvoices: React.FC = () => {
                   </td>
                   <td className="py-3.5 px-5 text-right">
                     <button
-                      onClick={() => downloadPdf(inv.invoiceNo)}
+                      onClick={() => downloadPdf(inv.id || inv.invoiceNo)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FAF9FB] hover:bg-[#F3EAF5] text-[#27212B] border border-[#EAE5EC] text-xs font-semibold transition-colors shadow-xs"
                     >
                       <span className="material-symbols-outlined text-[16px] text-[#6D286F]">download</span>

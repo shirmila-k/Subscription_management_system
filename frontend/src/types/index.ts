@@ -208,34 +208,174 @@ export interface Payment {
 
 export interface AnalyticsOverview {
   executionTimeMs: number;
+  period: string;
+  periodLabel: string;
+  startDate: string;
+  endDate: string;
+  currency: string;
+  currencySymbol: string;
   mrr?: number;
   arr?: number;
   activeSubscriptions?: number;
   totalRevenue?: number;
   totalSubscriptions?: number;
   kpis: {
+    totalCollectedRevenue: number;
+    currentMonthRevenue: number;
+    previousMonthRevenue: number;
+    revenueGrowthPercent: number;
+    mrr: number;
+    arr: number;
     totalSubscriptions: number;
     activeSubscriptions: number;
     quotationsPending: number;
     draftSubscriptions: number;
     pausedSubscriptions: number;
     closedSubscriptions: number;
-    mrr: number;
-    arr: number;
-    totalCollectedRevenue: number;
-    totalPaymentsCount: number;
+    cancelledSubscriptions: number;
+    totalCustomers: number;
+    newCustomersThisMonth: number;
+    newCustomersPrevMonth: number;
+    totalInvoicedAmount: number;
+    totalInvoicesCount: number;
+    outstandingBalanceTotal: number;
     overdueInvoicesCount: number;
     overdueInvoicesAmount: number;
-    outstandingBalanceTotal: number;
+    totalPaymentsCount: number;
   };
   statusDistribution: Record<string, number>;
   topPlans: {
     planId: string;
     planName: string;
     price: number;
+    billingFrequency: string;
     subscribersCount: number;
   }[];
-  recentActivity: any[];
+  recentSubscriptions: any[];
+  recentPayments: any[];
+  upcomingRenewals: any[];
+}
+
+export interface RevenueAnalytics {
+  period: string;
+  periodLabel: string;
+  startDate: string;
+  endDate: string;
+  currency: string;
+  currencySymbol: string;
+  totalCollectedRevenue: number;
+  refundedRevenue: number;
+  netRevenue: number;
+  paymentTransactionsCount: number;
+  revenueTrend: Array<{ label: string; revenue: number; count: number }>;
+  revenueByProduct: Array<{ name: string; code: string; revenue: number; count: number }>;
+  revenueByPlan: Array<{ name: string; revenue: number; count: number }>;
+  revenueByPaymentMethod: Array<{ method: string; revenue: number; count: number }>;
+}
+
+export interface SubscriptionAnalytics {
+  period: string;
+  periodLabel: string;
+  totalSubscriptions: number;
+  activeSubscriptions: number;
+  pendingSubscriptions: number;
+  pausedSubscriptions: number;
+  closedSubscriptions: number;
+  cancelledSubscriptions: number;
+  retentionRate: number;
+  statusCounts: Record<string, number>;
+  subscriptionsCreatedTrend: Array<{ label: string; count: number }>;
+  upcomingRenewals: Array<{
+    id: string;
+    subscriptionNumber: string;
+    customerName: string;
+    companyName?: string | null;
+    email: string;
+    planName: string;
+    price: number;
+    nextBillingDate?: string | null;
+    autoRenew: boolean;
+  }>;
+}
+
+export interface CustomerAnalytics {
+  period: string;
+  periodLabel: string;
+  totalCustomers: number;
+  newCustomersThisMonth: number;
+  newCustomersPrevMonth: number;
+  customerGrowthMoM: number;
+  customersWithActiveSubscriptions: number;
+  customersWithOverduePaymentsCount: number;
+  customerGrowthTrend: Array<{ label: string; count: number }>;
+  overdueCustomers: Array<{
+    customerId: string;
+    customerName: string;
+    companyName: string | null;
+    email: string;
+    overdueInvoiceCount: number;
+    totalOverdueAmount: number;
+  }>;
+}
+
+export interface BillingAnalytics {
+  period: string;
+  periodLabel: string;
+  currency: string;
+  currencySymbol: string;
+  totalInvoices: number;
+  paidInvoices: number;
+  unpaidInvoices: number;
+  overdueInvoices: number;
+  draftInvoices: number;
+  voidInvoices: number;
+  invoiceStatusDistribution: Record<string, number>;
+  totalInvoicedAmount: number;
+  totalCollectedRevenue: number;
+  totalOutstandingBalance: number;
+  overdueInvoicesAmount: number;
+  collectionEfficiencyPercent: number;
+  paymentsSummary: {
+    totalPayments: number;
+    successful: { count: number; amount: number };
+    pending: { count: number; amount: number };
+    failed: { count: number; amount: number };
+    refunded: { count: number; amount: number };
+  };
+}
+
+export interface ProductAnalytics {
+  totalProducts: number;
+  totalPlans: number;
+  topProducts: Array<{
+    id: string;
+    name: string;
+    code: string;
+    category: string;
+    brand: string;
+    variantsCount: number;
+    plansCount: number;
+    activeSubscribersCount: number;
+    totalSubscribersCount: number;
+    totalRevenue: number;
+    hasActiveSubscriptions: boolean;
+  }>;
+  topPlans: Array<{
+    id: string;
+    name: string;
+    code: string;
+    price: number;
+    currency: string;
+    billingFrequency: string;
+    productName: string;
+    productBrand: string;
+    activeSubscribersCount: number;
+    totalSubscribersCount: number;
+    totalRevenue: number;
+    hasActiveSubscriptions: boolean;
+  }>;
+  unusedProducts: any[];
+  unusedPlans: any[];
 }
 
 export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CONVERTED';

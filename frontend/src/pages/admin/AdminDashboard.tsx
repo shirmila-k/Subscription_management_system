@@ -104,23 +104,44 @@ export const AdminDashboard: React.FC = () => {
     },
   ];
 
+  const [realSubscriptions, setRealSubscriptions] = useState<any[]>([]);
+
   useEffect(() => {
     const fetchRealData = async () => {
       try {
         setLoading(true);
-        const res = await analyticsService.getOverview();
+        const [res, subs] = await Promise.all([
+          analyticsService.getOverview(),
+          subscriptionService.getSubscriptions().catch(() => []),
+        ]);
+
         if (res && res.kpis) {
           setStats({
-            activeCount: res.kpis.activeSubscriptions || 2486,
-            mrr: res.kpis.mrr || 1842500,
-            outstandingAmount: res.kpis.outstandingBalanceTotal || 284600,
-            overdueCount: res.kpis.overdueInvoicesCount || 28,
-            executionTimeMs: res.executionTimeMs || 38,
+            activeCount: res.kpis.activeSubscriptions ?? 0,
+            mrr: res.kpis.mrr ?? 0,
+            outstandingAmount: res.kpis.outstandingBalanceTotal ?? 0,
+            overdueCount: res.kpis.overdueInvoicesCount ?? 0,
+            executionTimeMs: res.executionTimeMs ?? 25,
           });
         }
+
+        if (Array.isArray(subs) && subs.length > 0) {
+          const mapped = subs.map((s: any) => ({
+            id: s.subscriptionNumber || s.id,
+            customer: s.customer ? `${s.customer.firstName} ${s.customer.lastName}`.trim() : 'Unknown Customer',
+            email: s.customer?.email || 'N/A',
+            initials: s.customer?.firstName ? s.customer.firstName.slice(0, 2).toUpperCase() : 'CU',
+            plan: s.plan?.name || 'Default Plan',
+            cycle: s.plan?.billingFrequency || 'Monthly',
+            amount: `₹${Number(s.totalAmount || 0).toLocaleString()}`,
+            nextBilling: s.nextBillingDate ? new Date(s.nextBillingDate).toLocaleDateString() : '—',
+            status: s.status,
+            statusColor: s.status === 'ACTIVE' ? 'emerald' : s.status === 'PAUSED' ? 'slate' : 'amber',
+          }));
+          setRealSubscriptions(mapped);
+        }
       } catch (err) {
-        // Fallback gracefully to high-fidelity Stitch demonstration figures
-        console.info('Backend analytics API offline or empty, using Stitch demo metrics');
+        console.info('Backend analytics API offline or empty');
       } finally {
         setLoading(false);
       }
@@ -129,7 +150,9 @@ export const AdminDashboard: React.FC = () => {
     fetchRealData();
   }, []);
 
-  const filteredSubscriptions = demoSubscriptions.filter((sub) => {
+  const displayedList = realSubscriptions.length > 0 ? realSubscriptions : demoSubscriptions;
+
+  const filteredSubscriptions = displayedList.filter((sub) => {
     const matchesFilter =
       statusFilter === 'All' ? true : sub.status.toLowerCase().includes(statusFilter.toLowerCase());
     const matchesSearch =

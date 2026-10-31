@@ -32,6 +32,14 @@ export const CustomerPortal: React.FC = () => {
   const pendingInvoices = invoices.filter((i) => i.status === 'CONFIRMED' || i.status === 'OVERDUE');
   const totalBalanceDue = pendingInvoices.reduce((acc, i) => acc + Number(i.balanceDue || 0), 0);
 
+  const handleDownloadInvoice = async (invoiceIdOrNo: string) => {
+    try {
+      await invoiceService.downloadPdf(invoiceIdOrNo, `invoice-${invoiceIdOrNo}.pdf`);
+    } catch (e: any) {
+      alert(`Could not download PDF: ${e.message || 'Error occurred'}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-[#817986] text-xs">
@@ -247,7 +255,7 @@ export const CustomerPortal: React.FC = () => {
                 </td>
                 <td className="py-3 px-5 text-right">
                   <button
-                    onClick={() => alert('Downloading official GST Tax Invoice INV-2024-1104...')}
+                    onClick={() => handleDownloadInvoice('INV-2024-1104')}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#FAF9FB] hover:bg-[#F3EAF5] text-[#27212B] border border-[#EAE5EC] text-xs font-semibold transition-colors"
                   >
                     <span className="material-symbols-outlined text-[16px] text-[#6D286F]">download</span>
@@ -266,7 +274,7 @@ export const CustomerPortal: React.FC = () => {
                 </td>
                 <td className="py-3 px-5 text-right">
                   <button
-                    onClick={() => alert('Downloading official GST Tax Invoice INV-2024-1089...')}
+                    onClick={() => handleDownloadInvoice('INV-2024-1089')}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#FAF9FB] hover:bg-[#F3EAF5] text-[#27212B] border border-[#EAE5EC] text-xs font-semibold transition-colors"
                   >
                     <span className="material-symbols-outlined text-[16px] text-[#6D286F]">download</span>

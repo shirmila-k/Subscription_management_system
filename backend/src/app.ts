@@ -25,7 +25,12 @@ export const createApp = (): Application => {
   app.use(helmet());
   app.use(
     cors({
-      origin: [env.frontendUrl, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin, callback) => {
+        if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || origin === env.frontendUrl) {
+          return callback(null, true);
+        }
+        return callback(null, true); // Allow dev origins seamlessly
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],

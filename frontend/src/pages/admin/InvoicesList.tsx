@@ -192,11 +192,14 @@ export const InvoicesList: React.FC = () => {
 
   const handleDownloadPdf = async (invoiceId: string, invNum: string) => {
     try {
-      const pdfUrl = invoiceService.getPdfUrl(invoiceId);
-      window.open(pdfUrl, '_blank');
-    } catch (e) {
-      alert(`Generating printable PDF for ${invNum}...`);
-      window.print();
+      setFeedback(`Downloading PDF for invoice ${invNum}...`);
+      await invoiceService.downloadPdf(invoiceId, `invoice-${invoiceId}.pdf`);
+      setFeedback(`Invoice ${invNum} downloaded successfully.`);
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (e: any) {
+      console.error('Download error:', e);
+      setFeedback(`Failed to download PDF for ${invNum}: ${e.message || 'Error occurred'}`);
+      setTimeout(() => setFeedback(null), 4000);
     }
   };
 
