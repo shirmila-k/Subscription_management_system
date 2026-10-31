@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { subscriptionService } from '../../services';
 
 interface SubItem {
   id: string;
@@ -56,22 +57,71 @@ export const CustomerSubscriptions: React.FC = () => {
   const [subs, setSubs] = useState<SubItem[]>(CUSTOMER_SUBS);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    subscriptionService
+      .getSubscriptions()
+      .then((data: any) => {
+        if (data && data.length > 0) {
+          const mapped: SubItem[] = data.map((s: any) => ({
+            id: s.id,
+            name: s.plan?.name || s.plan?.product?.name || 'Brightloop Cloud Subscription',
+            subRef: s.subscriptionNumber,
+            planName: s.plan?.name || 'Standard Tier',
+            billingFrequency: s.plan?.billingFrequency || 'Monthly',
+            startDate: s.startDate
+              ? new Date(s.startDate).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : 'Immediate',
+            renewalDate: s.nextBillingDate
+              ? new Date(s.nextBillingDate).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : 'Ongoing',
+            price: Number(s.totalAmount),
+            status: s.status,
+            seats: s.quantity || 1,
+          }));
+          setSubs(mapped);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handlePauseRequest = (id: string, name: string) => {
-    setSubs((prev) =>
-      prev.map((s) => {
-        if (s.id === id) {
-          const next = s.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-          showToast(`Subscription status for ${name} switched to ${next}.`);
-          return { ...s, status: next };
-        }
-        return s;
-      })
-    );
+  const handlePauseRequest = async (id: string, name: string) => {
+    const current = subs.find((s) => s.id === id);
+    if (!current) return;
+
+    try {
+      if (current.status === 'ACTIVE') {
+        await subscriptionService.pause(id, 'Customer paused from self-service portal');
+        showToast(`Subscription ${name} has been paused.`);
+      } else if (current.status === 'PAUSED') {
+        await subscriptionService.resume(id);
+        showToast(`Subscription ${name} has been resumed.`);
+      }
+
+      setSubs((prev) =>
+        prev.map((s) => {
+          if (s.id === id) {
+            const next = s.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+            return { ...s, status: next };
+          }
+          return s;
+        })
+      );
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Operation failed');
+    }
   };
 
   return (

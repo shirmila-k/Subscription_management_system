@@ -97,7 +97,9 @@ const INITIAL_DISCOUNTS: DemoDiscount[] = [
 ];
 
 export const DiscountsPage: React.FC = () => {
-  const [discounts, setDiscounts] = useState<DemoDiscount[]>(INITIAL_DISCOUNTS);
+  const [discounts, setDiscounts] = useState<DemoDiscount[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'ACTIVE' | 'SCHEDULED' | 'EXPIRED'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSlideOverOpen, setIsSlideOverOpen] = useState(false);
@@ -112,42 +114,45 @@ export const DiscountsPage: React.FC = () => {
     minPurchase: 10000,
     minQty: '1 seat min',
     appliesTo: 'Entire Subscription',
-    validFrom: '2024-11-01',
-    validUntil: '2024-12-31',
+    validFrom: new Date().toISOString().split('T')[0],
+    validUntil: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
     maxUsage: 50,
   });
 
+  const loadDiscounts = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await discountService.getDiscounts();
+      const mapped: DemoDiscount[] = (data || []).map((d: any) => ({
+        id: d.id,
+        name: d.name || d.code.replace(/_/g, ' '),
+        code: d.code,
+        type: d.type as any,
+        value: Number(d.value),
+        minPurchase: Number(d.minPurchaseAmount || 0),
+        minQty: d.minQuantity ? `${d.minQuantity} units min` : '1 min',
+        appliesTo: 'Entire Subscription',
+        validFrom: d.startDate
+          ? new Date(d.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+          : 'Ongoing',
+        validUntil: d.endDate
+          ? new Date(d.endDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+          : 'Open',
+        usedCount: d.timesUsed || 0,
+        maxUsage: d.usageLimit || 100,
+        status: !d.isActive ? 'EXPIRED' : (d.endDate && new Date(d.endDate) < new Date() ? 'EXPIRED' : 'ACTIVE'),
+      }));
+      setDiscounts(mapped);
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load promotional discount rules');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // Attempt fetching real discounts from backend
-    discountService
-      .getDiscounts()
-      .then((data: Discount[]) => {
-        if (data && data.length > 0) {
-          const mapped: DemoDiscount[] = data.map((d) => ({
-            id: d.id,
-            name: d.code.replace(/_/g, ' '),
-            code: d.code,
-            type: d.type as any,
-            value: Number(d.value),
-            minPurchase: Number(d.minPurchaseAmount || 0),
-            minQty: d.minQuantity ? `${d.minQuantity} units min` : '1 min',
-            appliesTo: 'Entire Subscription',
-            validFrom: d.validFrom
-              ? new Date(d.validFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
-              : 'Ongoing',
-            validUntil: d.validUntil
-              ? new Date(d.validUntil).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
-              : 'Open',
-            usedCount: d.usedCount || 0,
-            maxUsage: d.maxUsage || 100,
-            status: d.isActive ? 'ACTIVE' : 'EXPIRED',
-          }));
-          setDiscounts([...mapped, ...INITIAL_DISCOUNTS]);
-        }
-      })
-      .catch(() => {
-        // Fallback to high fidelity demo records
-      });
+    loadDiscounts();
   }, []);
 
   const showToast = (msg: string) => {
@@ -163,70 +168,66 @@ export const DiscountsPage: React.FC = () => {
   const handleCreateDiscountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.code || !formData.name) {
-      alert('Please fill out code and name.');
+      showToast('Please provide both rule name and promo code.');
       return;
     }
 
     try {
       await discountService.createDiscount({
-        code: formData.code.toUpperCase(),
+        name: formData.name,
+        code: formData.code.toUpperCase().trim(),
         type: formData.type,
         value: Number(formData.value),
-        minPurchaseAmount: Number(formData.minPurchase),
+        minPurchaseAmount: Number(formData.minPurchase) || 0,
         minQuantity: 1,
-        validFrom: new Date(formData.validFrom).toISOString(),
-        validUntil: new Date(formData.validUntil).toISOString(),
-        maxUsage: Number(formData.maxUsage),
+        startDate: formData.validFrom ? new Date(formData.validFrom).toISOString() : new Date().toISOString(),
+        endDate: formData.validUntil ? new Date(formData.validUntil).toISOString() : null,
+        usageLimit: Number(formData.maxUsage) || 100,
         isActive: true,
       });
-    } catch {
-      // Offline fallback
+
+      await loadDiscounts();
+      setIsSlideOverOpen(false);
+      showToast(`New promotion rule "${formData.code.toUpperCase()}" created successfully!`);
+      setFormData({
+        name: '',
+        code: '',
+        type: 'PERCENTAGE',
+        value: 10,
+        minPurchase: 10000,
+        minQty: '1 seat min',
+        appliesTo: 'Entire Subscription',
+        validFrom: new Date().toISOString().split('T')[0],
+        validUntil: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+        maxUsage: 50,
+      });
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to create discount');
     }
-
-    const newDisc: DemoDiscount = {
-      id: `disc-${Date.now()}`,
-      name: formData.name,
-      code: formData.code.toUpperCase(),
-      type: formData.type,
-      value: Number(formData.value),
-      minPurchase: Number(formData.minPurchase),
-      minQty: formData.minQty,
-      appliesTo: formData.appliesTo,
-      validFrom: formData.validFrom,
-      validUntil: formData.validUntil,
-      usedCount: 0,
-      maxUsage: Number(formData.maxUsage),
-      status: 'ACTIVE',
-    };
-
-    setDiscounts([newDisc, ...discounts]);
-    setIsSlideOverOpen(false);
-    showToast(`New promotion rule "${newDisc.code}" created successfully!`);
-    setFormData({
-      name: '',
-      code: '',
-      type: 'PERCENTAGE',
-      value: 10,
-      minPurchase: 10000,
-      minQty: '1 seat min',
-      appliesTo: 'Entire Subscription',
-      validFrom: '2024-11-01',
-      validUntil: '2024-12-31',
-      maxUsage: 50,
-    });
   };
 
-  const handleToggleStatus = (id: string) => {
-    setDiscounts((prev) =>
-      prev.map((d) => {
-        if (d.id === id) {
-          const nextStatus = d.status === 'ACTIVE' ? 'EXPIRED' : 'ACTIVE';
-          showToast(`Discount ${d.code} updated to ${nextStatus}.`);
-          return { ...d, status: nextStatus };
-        }
-        return d;
-      })
-    );
+  const handleToggleStatus = async (id: string) => {
+    const disc = discounts.find((d) => d.id === id);
+    if (!disc) return;
+    const newStatus = disc.status !== 'ACTIVE';
+    try {
+      await discountService.update(id, { isActive: newStatus });
+      showToast(`Discount ${disc.code} status updated.`);
+      await loadDiscounts();
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to update discount');
+    }
+  };
+
+  const handleDeleteDiscount = async (id: string, code: string) => {
+    if (!confirm(`Are you sure you want to deactivate discount ${code}?`)) return;
+    try {
+      await discountService.deleteDiscount(id);
+      showToast(`Discount ${code} removed or deactivated.`);
+      await loadDiscounts();
+    } catch (err: any) {
+      showToast(err.response?.data?.message || err.message || 'Failed to delete discount');
+    }
   };
 
   const filtered = discounts.filter((d) => {

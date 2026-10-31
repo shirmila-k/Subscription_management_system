@@ -7,6 +7,8 @@ import {
   Invoice,
   Payment,
   Discount,
+  Quotation,
+  QuotationTemplate,
   AnalyticsOverview,
 } from '../types';
 
@@ -102,10 +104,37 @@ export const subscriptionService = {
 };
 
 export const quotationService = {
-  getQuotations: () =>
-    axiosClient.get<Subscription[]>('/subscriptions', {
-      params: { status: 'QUOTATION' },
-    }) as unknown as Promise<Subscription[]>,
+  getQuotations: (params?: any) =>
+    axiosClient.get<Quotation[]>('/quotations', { params }) as unknown as Promise<Quotation[]>,
+  getAll: (params?: any) =>
+    axiosClient.get<Quotation[]>('/quotations', { params }) as unknown as Promise<Quotation[]>,
+  getById: (id: string) =>
+    axiosClient.get<Quotation>(`/quotations/${id}`) as unknown as Promise<Quotation>,
+  create: (data: any) =>
+    axiosClient.post<Quotation>('/quotations', data) as unknown as Promise<Quotation>,
+  update: (id: string, data: any) =>
+    axiosClient.put<Quotation>(`/quotations/${id}`, data) as unknown as Promise<Quotation>,
+  send: (id: string) =>
+    axiosClient.post<Quotation>(`/quotations/${id}/send`) as unknown as Promise<Quotation>,
+  accept: (id: string) =>
+    axiosClient.post<Quotation>(`/quotations/${id}/accept`) as unknown as Promise<Quotation>,
+  reject: (id: string, reason?: string) =>
+    axiosClient.post<Quotation>(`/quotations/${id}/reject`, { reason }) as unknown as Promise<Quotation>,
+  convertToSubscription: (id: string, data?: any) =>
+    axiosClient.post<Subscription>(`/quotations/${id}/convert`, data) as unknown as Promise<Subscription>,
+};
+
+export const quotationTemplateService = {
+  getAll: (params?: any) =>
+    axiosClient.get<QuotationTemplate[]>('/quotation-templates', { params }) as unknown as Promise<QuotationTemplate[]>,
+  getById: (id: string) =>
+    axiosClient.get<QuotationTemplate>(`/quotation-templates/${id}`) as unknown as Promise<QuotationTemplate>,
+  create: (data: any) =>
+    axiosClient.post<QuotationTemplate>('/quotation-templates', data) as unknown as Promise<QuotationTemplate>,
+  update: (id: string, data: any) =>
+    axiosClient.put<QuotationTemplate>(`/quotation-templates/${id}`, data) as unknown as Promise<QuotationTemplate>,
+  delete: (id: string) =>
+    axiosClient.delete(`/quotation-templates/${id}`) as unknown as Promise<void>,
 };
 
 export const invoiceService = {
@@ -136,14 +165,18 @@ export const paymentService = {
 };
 
 export const discountService = {
-  getDiscounts: () =>
-    axiosClient.get<Discount[]>('/discounts') as unknown as Promise<Discount[]>,
-  getAll: () =>
-    axiosClient.get<Discount[]>('/discounts') as unknown as Promise<Discount[]>,
+  getDiscounts: (params?: any) =>
+    axiosClient.get<Discount[]>('/discounts', { params }) as unknown as Promise<Discount[]>,
+  getAll: (params?: any) =>
+    axiosClient.get<Discount[]>('/discounts', { params }) as unknown as Promise<Discount[]>,
+  getById: (id: string) =>
+    axiosClient.get<Discount>(`/discounts/${id}`) as unknown as Promise<Discount>,
   createDiscount: (data: any) =>
     axiosClient.post<Discount>('/discounts', data) as unknown as Promise<Discount>,
   create: (data: any) =>
     axiosClient.post<Discount>('/discounts', data) as unknown as Promise<Discount>,
+  update: (id: string, data: any) =>
+    axiosClient.put<Discount>(`/discounts/${id}`, data) as unknown as Promise<Discount>,
   deleteDiscount: (id: string) =>
     axiosClient.delete(`/discounts/${id}`) as unknown as Promise<void>,
   validateDiscount: (code: string, quantity: number, subtotal: number) =>

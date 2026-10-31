@@ -87,6 +87,7 @@ export interface Plan {
 
 export interface Discount {
   id: string;
+  name?: string | null;
   code: string;
   description?: string | null;
   type: DiscountType;
@@ -235,4 +236,64 @@ export interface AnalyticsOverview {
     subscribersCount: number;
   }[];
   recentActivity: any[];
+}
+
+export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CONVERTED';
+
+export interface QuotationItem {
+  id?: string;
+  quotationId?: string;
+  productId?: string | null;
+  product?: Product;
+  variantId?: string | null;
+  variant?: ProductVariant;
+  planId?: string | null;
+  plan?: Plan;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discountAmount?: number;
+  taxAmount?: number;
+  lineTotal: number;
+}
+
+export interface QuotationTemplate {
+  id: string;
+  name: string;
+  description?: string | null;
+  defaultTerms?: string | null;
+  defaultValidityDays: number;
+  defaultItems?: any[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Quotation {
+  id: string;
+  quotationNumber: string;
+  customerId: string;
+  customer?: User;
+  createdById?: string | null;
+  createdBy?: User;
+  templateId?: string | null;
+  template?: QuotationTemplate;
+  status: QuotationStatus;
+  quotationDate: string;
+  expiryDate: string;
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  terms?: string | null;
+  notes?: string | null;
+  items: QuotationItem[];
+  subscription?: {
+    id: string;
+    subscriptionNumber: string;
+    status: SubscriptionStatus;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
 }

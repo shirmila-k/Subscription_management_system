@@ -10,6 +10,8 @@ import authRoutes from './modules/auth/auth.routes';
 import productsRoutes from './modules/products/products.routes';
 import plansRoutes from './modules/plans/plans.routes';
 import discountsRoutes from './modules/discounts/discounts.routes';
+import quotationsRoutes from './modules/quotations/quotations.routes';
+import quotationTemplatesRoutes from './modules/quotations/quotationTemplates.routes';
 import subscriptionsRoutes from './modules/subscriptions/subscriptions.routes';
 import invoicesRoutes from './modules/invoices/invoices.routes';
 import paymentsRoutes from './modules/payments/payments.routes';
@@ -52,6 +54,8 @@ export const createApp = (): Application => {
   apiRouter.use('/products', productsRoutes);
   apiRouter.use('/plans', plansRoutes);
   apiRouter.use('/discounts', discountsRoutes);
+  apiRouter.use('/quotations', quotationsRoutes);
+  apiRouter.use('/quotation-templates', quotationTemplatesRoutes);
   apiRouter.use('/subscriptions', subscriptionsRoutes);
   apiRouter.use('/invoices', invoicesRoutes);
   apiRouter.use('/payments', paymentsRoutes);

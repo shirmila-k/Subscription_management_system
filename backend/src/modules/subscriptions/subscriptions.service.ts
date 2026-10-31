@@ -4,6 +4,8 @@ import {
   SubscriptionStatus,
   PaymentTerms,
   BillingFrequency,
+  ProductStatus,
+  PlanStatus,
 } from '@prisma/client';
 import { env } from '../../config/env';
 
@@ -45,11 +47,27 @@ export class SubscriptionsService {
   async createSubscription(input: CreateSubscriptionInput, createdById?: string) {
     const plan = await prisma.plan.findUnique({
       where: { id: input.planId },
-      include: { product: true },
+      include: { product: true, variant: true },
     });
 
-    if (!plan || !plan.isActive) {
-      throw new Error('Selected plan is invalid or inactive');
+    if (!plan || !plan.isActive || plan.status === PlanStatus.ARCHIVED) {
+      throw new Error('Selected plan is invalid, inactive, or archived');
+    }
+
+    if (plan.product && (plan.product.status === ProductStatus.ARCHIVED || !plan.product.isActive)) {
+      throw new Error(`Product '${plan.product.name}' is archived and cannot be newly subscribed to`);
+    }
+
+    if (plan.variant && !plan.variant.isActive) {
+      throw new Error(`Product variant '${plan.variant.name}' is inactive and cannot be subscribed to`);
+    }
+
+    const now = new Date();
+    if (plan.availableFrom && plan.availableFrom > now) {
+      throw new Error(`Selected plan '${plan.name}' is not yet available`);
+    }
+    if (plan.availableTo && plan.availableTo < now) {
+      throw new Error(`Selected plan '${plan.name}' availability period has ended`);
     }
 
     const quantity = input.quantity ?? plan.minQuantity;
@@ -110,6 +128,20 @@ export class SubscriptionsService {
         customer: {
           select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
         },
+      },
+    });
+
+    // Create initial subscription item snapshot to preserve agreed price
+    await prisma.subscriptionItem.create({
+      data: {
+        subscriptionId: subscription.id,
+        productId: plan.productId,
+        variantId: plan.variantId,
+        planId: plan.id,
+        description: plan.name,
+        quantity,
+        unitPrice: plan.price,
+        lineTotal: subtotal,
       },
     });
 

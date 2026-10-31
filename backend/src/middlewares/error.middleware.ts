@@ -12,6 +12,15 @@ export const errorHandler = (
     console.error('[Error caught by global handler]:', err.message || err);
   }
 
+  // Zod schema validation error
+  if (err.name === 'ZodError' || err.issues) {
+    const message = err.errors
+      ? err.errors.map((e: any) => `${e.path.join('.')}: ${e.message}`).join('; ')
+      : err.message || 'Validation error';
+    sendError(res, message, 400, err.errors);
+    return;
+  }
+
   // Prisma unique constraint violation (P2002)
   if (err.code === 'P2002') {
     const target = err.meta?.target ? `Duplicate field: ${err.meta.target}` : 'Resource already exists';

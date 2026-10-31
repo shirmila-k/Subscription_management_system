@@ -293,6 +293,7 @@ model QuotationTemplate {
   description         String?
   defaultTerms        String?  @db.Text
   defaultValidityDays Int      @default(30)
+  defaultItems        Json?    // Reusable template items: [{ productId, variantId, planId, description, quantity, unitPrice, discountAmount, taxAmount }]
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

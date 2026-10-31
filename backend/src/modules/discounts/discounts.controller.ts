@@ -1,6 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import { discountsService } from './discounts.service';
 import { sendSuccess, sendError } from '../../utils/response';
+import {
+  createDiscountSchema,
+  updateDiscountSchema,
+  validateDiscountSchema,
+} from './discounts.validation';
 
 export class DiscountsController {
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -26,7 +31,8 @@ export class DiscountsController {
 
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const discount = await discountsService.createDiscount(req.body);
+      const validated = createDiscountSchema.parse(req.body);
+      const discount = await discountsService.createDiscount(validated);
       sendSuccess(res, 'Discount rule created successfully', discount, 201);
     } catch (error: any) {
       next(error);
@@ -35,7 +41,8 @@ export class DiscountsController {
 
   async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const updated = await discountsService.updateDiscount(req.params.id, req.body);
+      const validated = updateDiscountSchema.parse(req.body);
+      const updated = await discountsService.updateDiscount(req.params.id, validated);
       sendSuccess(res, 'Discount updated successfully', updated);
     } catch (error: any) {
       next(error);
@@ -53,11 +60,11 @@ export class DiscountsController {
 
   async validateCode(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { code, quantity, subtotal } = req.body;
+      const validated = validateDiscountSchema.parse(req.body);
       const result = await discountsService.validateAndApplyDiscount(
-        code,
-        Number(quantity || 1),
-        Number(subtotal || 0)
+        validated.code,
+        validated.quantity,
+        validated.subtotal
       );
       sendSuccess(res, 'Discount validated successfully', result);
     } catch (error: any) {
