@@ -1,16 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import { plansService } from './plans.service';
-import { sendSuccess, sendError } from '../../utils/response';
-import { BillingFrequency } from '@prisma/client';
+import { sendSuccess } from '../../utils/response';
+import { BillingFrequency, PlanStatus } from '@prisma/client';
 
 export class PlansController {
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { productId, frequency, isActive } = req.query;
+      const { productId, frequency, status, availableOnly, search } = req.query;
       const plans = await plansService.getAllPlans({
         productId: productId as string,
         frequency: frequency as BillingFrequency,
-        isActive: isActive !== undefined ? isActive === 'true' : undefined,
+        status: status as PlanStatus,
+        availableOnly: availableOnly === 'true',
+        search: search as string,
       });
       sendSuccess(res, 'Plans retrieved successfully', plans);
     } catch (error: any) {
@@ -23,7 +25,7 @@ export class PlansController {
       const plan = await plansService.getPlanById(req.params.id);
       sendSuccess(res, 'Plan retrieved successfully', plan);
     } catch (error: any) {
-      sendError(res, error.message, 404);
+      next(error);
     }
   }
 
@@ -45,10 +47,29 @@ export class PlansController {
     }
   }
 
+  async archive(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const archived = await plansService.archivePlan(req.params.id);
+      sendSuccess(res, 'Plan archived successfully', archived);
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
   async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await plansService.deletePlan(req.params.id);
-      sendSuccess(res, 'Plan deleted successfully');
+      sendSuccess(res, 'Plan deleted permanently');
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async checkAvailability(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const quantity = req.query.quantity ? parseInt(req.query.quantity as string, 10) : 1;
+      const result = await plansService.validatePlanForSubscription(req.params.id, quantity);
+      sendSuccess(res, 'Plan is active and available for subscription', result);
     } catch (error: any) {
       next(error);
     }

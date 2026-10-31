@@ -1,16 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import { productsService } from './products.service';
-import { sendSuccess, sendError } from '../../utils/response';
+import { sendSuccess } from '../../utils/response';
+import { ProductStatus } from '@prisma/client';
 
 export class ProductsController {
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { search, brand, category, isActive } = req.query;
+      const { search, brand, category, status, includeArchived } = req.query;
       const products = await productsService.getAllProducts({
         search: search as string,
         brand: brand as string,
         category: category as string,
-        isActive: isActive !== undefined ? isActive === 'true' : undefined,
+        status: status as ProductStatus,
+        includeArchived: includeArchived === 'true',
       });
       sendSuccess(res, 'Products retrieved successfully', products);
     } catch (error: any) {
@@ -23,7 +25,7 @@ export class ProductsController {
       const product = await productsService.getProductById(req.params.id);
       sendSuccess(res, 'Product retrieved successfully', product);
     } catch (error: any) {
-      sendError(res, error.message, 404);
+      next(error);
     }
   }
 
@@ -45,10 +47,19 @@ export class ProductsController {
     }
   }
 
+  async archive(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const archived = await productsService.archiveProduct(req.params.id);
+      sendSuccess(res, 'Product archived successfully', archived);
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
   async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await productsService.deleteProduct(req.params.id);
-      sendSuccess(res, 'Product deleted successfully');
+      sendSuccess(res, 'Product deleted permanently');
     } catch (error: any) {
       next(error);
     }
@@ -56,10 +67,7 @@ export class ProductsController {
 
   async addVariant(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const variant = await productsService.addVariant({
-        productId: req.params.id,
-        ...req.body,
-      });
+      const variant = await productsService.addVariant(req.params.id, req.body);
       sendSuccess(res, 'Variant added successfully', variant, 201);
     } catch (error: any) {
       next(error);
