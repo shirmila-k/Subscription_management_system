@@ -30,7 +30,7 @@ export class ProductsController {
 
   public static async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const { name, sku, description, brand, category, variants } = req.body;
+      const { name, sku, description, brand, category, type, salesPrice, costPrice, notes, variants } = req.body;
       if (!name || !sku) {
         throw new BadRequestError('Product name and SKU are required.');
       }
@@ -40,6 +40,10 @@ export class ProductsController {
         description,
         brand,
         category,
+        type,
+        salesPrice: salesPrice !== undefined ? Number(salesPrice) : undefined,
+        costPrice: costPrice !== undefined ? Number(costPrice) : undefined,
+        notes,
         variants,
       });
       return sendSuccess(res, product, 'Product created successfully', 201);

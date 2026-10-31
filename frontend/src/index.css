@@ -4,37 +4,46 @@
 
 @layer base {
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #FAF9FB;
+    color: #27212B;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-/* Glassmorphism & Custom Accents */
-.glass-panel {
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* Stitch White Surface & Restrained Shadows */
+.stitch-card {
+  background-color: #FFFFFF;
+  border: 1px solid #EAE5EC;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px 0 rgba(39, 33, 43, 0.04), 0 1px 2px 0 rgba(39, 33, 43, 0.02);
+  transition: all 0.2s ease;
 }
 
-.glass-card {
-  background: rgba(30, 41, 59, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+.stitch-card:hover {
+  border-color: #D1ACD7;
+  box-shadow: 0 4px 12px 0 rgba(66, 23, 71, 0.06);
 }
 
-/* Custom Scrollbar */
+/* Stitch Dark-Plum Sidebar */
+.stitch-sidebar {
+  background-color: #421747;
+  color: #FFFFFF;
+}
+
+/* Custom Scrollbar styled for White-and-Plum */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: #FAF9FB;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #D1ACD7;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #84418A;
 }

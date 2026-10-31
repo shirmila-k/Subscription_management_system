@@ -27,11 +27,16 @@ export class DiscountsController {
 
   public static async validate(req: Request, res: Response, next: NextFunction) {
     try {
-      const { code, quantity, amount } = req.body;
+      const { code, quantity, amount, productId } = req.body;
       if (!code) {
         throw new BadRequestError('Coupon code is required.');
       }
-      const result = await DiscountsService.validateCode(code, Number(quantity) || 1, Number(amount) || 0);
+      const result = await DiscountsService.validateCode(
+        code,
+        Number(quantity) || 1,
+        Number(amount) || 0,
+        productId as string
+      );
       return sendSuccess(res, result, 'Coupon applied successfully');
     } catch (error) {
       next(error);
@@ -40,7 +45,7 @@ export class DiscountsController {
 
   public static async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const { code, type, value, minQuantity, minPurchaseAmount, startDate, endDate, maxUses } = req.body;
+      const { code, type, value, minQuantity, minPurchaseAmount, startDate, endDate, maxUses, productId } = req.body;
       if (!code || !type || value === undefined || !startDate || !endDate) {
         throw new BadRequestError('code, type, value, startDate, and endDate are required.');
       }
@@ -53,6 +58,7 @@ export class DiscountsController {
         startDate: new Date(startDate),
         endDate: new Date(endDate),
         maxUses: maxUses ? Number(maxUses) : undefined,
+        productId: productId || undefined,
       });
       return sendSuccess(res, discount, 'Discount created successfully', 201);
     } catch (error) {

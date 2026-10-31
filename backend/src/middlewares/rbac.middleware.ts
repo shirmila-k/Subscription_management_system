@@ -20,3 +20,5 @@ export const authorize = (...allowedRoles: UserRole[]) => {
     next();
   };
 };
+
+export const requireRoles = authorize;

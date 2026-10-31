@@ -59,6 +59,10 @@ async function main() {
     create: {
       sku: 'PROD-BL-ERP-01',
       name: 'Brightloop Cloud ERP Platform',
+      type: 'Software / SaaS',
+      salesPrice: 99.0,
+      costPrice: 45.0,
+      notes: 'Flagship ERP platform for small, medium and enterprise clients.',
       brand: 'Brightloop Enterprise',
       category: 'Software / SaaS',
       description: 'Comprehensive business management suite with accounting, inventory, and CRM modules.',
@@ -76,13 +80,19 @@ async function main() {
             attributes: { storageGB: 500, userSeats: 100, supportTier: 'Dedicated 24/7' },
             extraCost: 150.0,
           },
+          {
+            sku: 'VAR-ERP-ODOO',
+            name: 'Odoo Brand Edition (Integrated Odoo Apps & Connector)',
+            attributes: { brand: 'Odoo', connector: 'Odoo ERP Sync', supportTier: 'Gold' },
+            extraCost: 560.0,
+          },
         ],
       },
     },
     include: { variants: true },
   });
 
-  console.log('Seeded Product and Variants');
+  console.log('Seeded Product and Variants (including Odoo Brand +560)');
 
   // 3. Seed Plans with Billing Frequencies and Lifecycle Rules
   const monthlyPlan = await prisma.plan.create({
@@ -123,7 +133,33 @@ async function main() {
 
   console.log('Seeded Plans (Monthly & Yearly)');
 
-  // 4. Seed Promo Discount Code
+  // 4. Seed Quotation Template for Sales Team
+  await prisma.quotationTemplate.upsert({
+    where: { name: 'Standard Corporate ERP Package' },
+    update: {},
+    create: {
+      name: 'Standard Corporate ERP Package',
+      description: 'Pre-set offer template for mid-market clients with standard 30-day validity.',
+      planId: monthlyPlan.id,
+      validityDays: 30,
+      defaultPaymentTerms: PaymentTerms.NET30,
+      defaultNotes: 'Includes standard onboarding, data migration consultation, and 10 user seats.',
+      lines: {
+        create: [
+          {
+            description: 'ERP Professional Monthly Base Subscription',
+            quantity: 1,
+            unitPrice: 99.0,
+            variantId: erpProduct.variants[0]?.id,
+          },
+        ],
+      },
+    },
+  });
+
+  console.log('Seeded Quotation Template for Sales Team');
+
+  // 5. Seed Promo Discount Code
   await prisma.discount.upsert({
     where: { code: 'WELCOME20' },
     update: {},

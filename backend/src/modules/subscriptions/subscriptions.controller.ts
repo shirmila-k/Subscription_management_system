@@ -39,6 +39,7 @@ export class SubscriptionsController {
       const {
         customerId,
         planId,
+        templateId,
         quantity,
         paymentTerms,
         discountCode,
@@ -49,13 +50,14 @@ export class SubscriptionsController {
 
       const targetCustomerId = req.user?.role === 'CUSTOMER' ? req.user.userId : customerId;
 
-      if (!targetCustomerId || !planId) {
-        throw new BadRequestError('Customer ID and Plan ID are required to create a quotation.');
+      if (!targetCustomerId || (!planId && !templateId)) {
+        throw new BadRequestError('Customer ID and either Plan ID or Template ID are required.');
       }
 
       const quotation = await SubscriptionsService.createQuotation({
         customerId: targetCustomerId,
         planId,
+        templateId,
         quantity: quantity ? Number(quantity) : 1,
         paymentTerms,
         discountCode,

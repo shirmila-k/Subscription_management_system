@@ -11,6 +11,9 @@ export class DiscountsService {
 
     return prisma.discount.findMany({
       where,
+      include: {
+        product: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -18,6 +21,9 @@ export class DiscountsService {
   public static async getById(id: string) {
     const discount = await prisma.discount.findUnique({
       where: { id },
+      include: {
+        product: true,
+      },
     });
 
     if (!discount) {
@@ -27,9 +33,12 @@ export class DiscountsService {
     return discount;
   }
 
-  public static async validateCode(code: string, quantity = 1, amount = 0) {
+  public static async validateCode(code: string, quantity = 1, amount = 0, productId?: string) {
     const discount = await prisma.discount.findUnique({
       where: { code: code.toUpperCase() },
+      include: {
+        product: true,
+      },
     });
 
     if (!discount) {
@@ -38,6 +47,13 @@ export class DiscountsService {
 
     if (!discount.isActive) {
       throw new BadRequestError('This discount coupon is inactive.');
+    }
+
+    // Check product restriction if discount is bound to a specific product
+    if (discount.productId && productId && discount.productId !== productId) {
+      throw new BadRequestError(
+        `This discount is exclusively applicable to ${discount.product?.name || 'a specific product'}.`
+      );
     }
 
     const now = new Date();
@@ -57,7 +73,7 @@ export class DiscountsService {
 
     if (amount < Number(discount.minPurchaseAmount)) {
       throw new BadRequestError(
-        `This discount requires a minimum order amount of ${discount.minPurchaseAmount}.`
+        `This discount requires a minimum order amount of $${discount.minPurchaseAmount}.`
       );
     }
 
@@ -84,6 +100,7 @@ export class DiscountsService {
     startDate: Date;
     endDate: Date;
     maxUses?: number;
+    productId?: string;
   }) {
     const existing = await prisma.discount.findUnique({
       where: { code: data.code.toUpperCase() },
@@ -103,6 +120,10 @@ export class DiscountsService {
         startDate: data.startDate,
         endDate: data.endDate,
         maxUses: data.maxUses,
+        productId: data.productId || null,
+      },
+      include: {
+        product: true,
       },
     });
   }
@@ -117,6 +138,7 @@ export class DiscountsService {
       startDate?: Date;
       endDate?: Date;
       maxUses?: number;
+      productId?: string | null;
       isActive?: boolean;
     }
   ) {
@@ -125,6 +147,9 @@ export class DiscountsService {
     return prisma.discount.update({
       where: { id },
       data,
+      include: {
+        product: true,
+      },
     });
   }
 

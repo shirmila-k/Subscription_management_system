@@ -64,6 +64,10 @@ export class ProductsService {
     sku: string;
     brand?: string;
     category?: string;
+    type?: string;
+    salesPrice?: number;
+    costPrice?: number;
+    notes?: string;
     variants?: Array<{
       name: string;
       sku: string;
@@ -78,6 +82,10 @@ export class ProductsService {
         sku: data.sku,
         brand: data.brand,
         category: data.category,
+        type: data.type || 'Software',
+        salesPrice: data.salesPrice ?? 0,
+        costPrice: data.costPrice ?? 0,
+        notes: data.notes,
         variants: data.variants
           ? {
               create: data.variants.map((v) => ({
@@ -103,6 +111,10 @@ export class ProductsService {
       sku?: string;
       brand?: string;
       category?: string;
+      type?: string;
+      salesPrice?: number;
+      costPrice?: number;
+      notes?: string;
       isActive?: boolean;
     }
   ) {

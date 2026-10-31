@@ -41,7 +41,8 @@ export class SubscriptionsService {
    */
   public static async createQuotation(data: {
     customerId: string;
-    planId: string;
+    planId?: string;
+    templateId?: string;
     quantity?: number;
     paymentTerms?: PaymentTerms;
     discountCode?: string;
@@ -54,8 +55,42 @@ export class SubscriptionsService {
       unitPrice: number;
     }>;
   }) {
+    let targetPlanId = data.planId;
+    let effectiveTerms = data.paymentTerms;
+    let effectiveNotes = data.quotationNotes;
+    let effectiveExpiresInDays = data.quotationExpiresInDays;
+    let effectiveItems = data.customItems;
+
+    if (data.templateId) {
+      const template = await prisma.quotationTemplate.findUnique({
+        where: { id: data.templateId },
+        include: { lines: true },
+      });
+
+      if (!template) {
+        throw new NotFoundError(`Quotation template with ID ${data.templateId} not found.`);
+      }
+
+      if (!targetPlanId) targetPlanId = template.planId;
+      if (!effectiveTerms) effectiveTerms = template.defaultPaymentTerms;
+      if (!effectiveNotes) effectiveNotes = template.defaultNotes || undefined;
+      if (!effectiveExpiresInDays) effectiveExpiresInDays = template.validityDays;
+      if (!effectiveItems && template.lines.length > 0) {
+        effectiveItems = template.lines.map((l) => ({
+          variantId: l.variantId || undefined,
+          description: l.description,
+          quantity: l.quantity,
+          unitPrice: Number(l.unitPrice),
+        }));
+      }
+    }
+
+    if (!targetPlanId) {
+      throw new BadRequestError('A valid planId or templateId is required to generate a quotation.');
+    }
+
     const plan = await prisma.plan.findUnique({
-      where: { id: data.planId },
+      where: { id: targetPlanId },
       include: { product: true, variant: true },
     });
 
@@ -73,7 +108,13 @@ export class SubscriptionsService {
 
     const quantity = Math.max(data.quantity || 1, plan.minimumQuantity);
     const unitPrice = Number(plan.cost);
-    let subtotal = unitPrice * quantity;
+    let subtotal = 0;
+
+    if (effectiveItems && effectiveItems.length > 0) {
+      subtotal = effectiveItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    } else {
+      subtotal = unitPrice * quantity;
+    }
 
     // Check discount if provided
     let discountId: string | undefined = undefined;
@@ -106,24 +147,24 @@ export class SubscriptionsService {
     const subscriptionNumber = await this.generateSubscriptionNumber();
 
     const quotationExpiresAt = new Date();
-    quotationExpiresAt.setDate(quotationExpiresAt.getDate() + (data.quotationExpiresInDays || 14));
+    quotationExpiresAt.setDate(quotationExpiresAt.getDate() + (effectiveExpiresInDays || 14));
 
     return prisma.subscription.create({
       data: {
         subscriptionNumber,
         customerId: data.customerId,
-        planId: data.planId,
+        planId: targetPlanId,
         status: SubscriptionStatus.QUOTATION,
         quantity,
         unitPrice,
         discountId,
         discountAmount,
         totalAmount,
-        paymentTerms: data.paymentTerms || PaymentTerms.IMMEDIATE,
-        quotationNotes: data.quotationNotes,
+        paymentTerms: effectiveTerms || PaymentTerms.IMMEDIATE,
+        quotationNotes: effectiveNotes,
         quotationExpiresAt,
         items: {
-          create: data.customItems?.map((item) => ({
+          create: effectiveItems?.map((item) => ({
             variantId: item.variantId,
             description: item.description,
             quantity: item.quantity,

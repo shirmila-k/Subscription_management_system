@@ -36,19 +36,26 @@ export interface User {
   createdAt: string;
 }
 
+export type Customer = User;
+
 export interface ProductVariant {
   id: string;
   productId: string;
   name: string;
-  sku: string;
+  sku?: string;
   attributes?: Record<string, any>;
   extraCost: number;
-  isActive: boolean;
+  notes?: string;
+  isActive?: boolean;
 }
 
 export interface Product {
   id: string;
   name: string;
+  type?: string;
+  salesPrice?: number;
+  costPrice?: number;
+  notes?: string;
   description?: string;
   sku: string;
   brand?: string;
@@ -172,7 +179,32 @@ export interface Discount {
   endDate: string;
   maxUses?: number;
   usedCount: number;
+  productId?: string;
+  product?: Product;
   isActive: boolean;
+}
+
+export interface QuotationTemplateLine {
+  id: string;
+  templateId: string;
+  variantId?: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  variant?: ProductVariant;
+}
+
+export interface QuotationTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  planId: string;
+  validityDays: number;
+  defaultPaymentTerms: string;
+  defaultNotes?: string;
+  isActive: boolean;
+  plan?: Plan;
+  lines?: QuotationTemplateLine[];
 }
 
 export interface AnalyticsSummary {

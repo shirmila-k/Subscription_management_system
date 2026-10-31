@@ -14,14 +14,16 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
   children,
 }) => {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-screen flex flex-col bg-[#FAF9FB] text-[#27212B]">
       <Navbar />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar currentTab={currentTab} onTabChange={onTabChange} />
-        <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-b from-slate-900/50 to-slate-950">
-          <div className="max-w-7xl mx-auto space-y-8">{children}</div>
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 bg-[#FAF9FB]">
+          <div className="max-w-7xl mx-auto space-y-6">{children}</div>
         </main>
       </div>
     </div>
   );
 };
+
+export default StaffLayout;

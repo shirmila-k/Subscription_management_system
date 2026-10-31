@@ -11,6 +11,7 @@ import invoicesRoutes from './modules/invoices/invoices.routes';
 import paymentsRoutes from './modules/payments/payments.routes';
 import discountsRoutes from './modules/discounts/discounts.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
+import quotationTemplatesRoutes from './modules/quotations/quotationTemplates.routes';
 import { errorHandler } from './middlewares/error.middleware';
 import { env } from './config/env';
 
@@ -49,6 +50,7 @@ app.use('/api/v1/invoices', invoicesRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
 app.use('/api/v1/discounts', discountsRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/quotation-templates', quotationTemplatesRoutes);
 
 // 404 Route Handler
 app.use((req: Request, res: Response) => {
