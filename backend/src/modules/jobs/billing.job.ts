@@ -2,6 +2,7 @@ import prisma from '../../config/db';
 import { invoicesService } from '../invoices/invoices.service';
 import { SubscriptionStatus, InvoiceStatus } from '@prisma/client';
 import { calculateNextBillingPeriod } from '../subscriptions/billing.calculator';
+import { notificationsService } from '../notifications/notifications.service';
 
 export class BillingJobsService {
   /**
@@ -91,51 +92,118 @@ export class BillingJobsService {
 
   /**
    * 2. Renewal & Expiry Reminder Notice
-   * Identifies subscriptions expiring in 7 days
+   * Identifies subscriptions expiring in configured intervals (e.g. 7, 3, 1, 0 days)
+   * Prevents duplicates using stable idempotency keys
    */
-  async runRenewalReminders(): Promise<{ notifiedCount: number }> {
-    console.log('[Cron Job] Checking subscriptions nearing expiration...');
-    const now = new Date();
-    const sevenDaysLater = new Date();
-    sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
+  async runRenewalReminders(intervals: number[] = [7, 3, 1, 0]): Promise<{ notifiedCount: number; reminderIntervals: number[] }> {
+    console.log(`[Cron Job] Checking subscriptions nearing expiration across intervals: ${intervals.join(', ')} days...`);
+    const today = new Date();
+    let totalNotified = 0;
 
-    const expiringSubscriptions = await prisma.subscription.findMany({
-      where: {
-        status: SubscriptionStatus.ACTIVE,
-        expiryDate: {
-          gte: now,
-          lte: sevenDaysLater,
-        },
-      },
-      include: {
-        customer: true,
-        plan: true,
-      },
-    });
+    for (const days of intervals) {
+      const targetStart = new Date(today);
+      targetStart.setDate(targetStart.getDate() + days);
+      targetStart.setHours(0, 0, 0, 0);
 
-    console.log(`[Cron Job] Found ${expiringSubscriptions.length} subscriptions expiring within 7 days.`);
+      const targetEnd = new Date(today);
+      targetEnd.setDate(targetEnd.getDate() + days);
+      targetEnd.setHours(23, 59, 59, 999);
 
-    for (const sub of expiringSubscriptions) {
-      await prisma.auditLog.create({
-        data: {
-          action: 'RENEWAL_REMINDER_SENT',
-          entity: 'SUBSCRIPTION',
-          entityId: sub.id,
-          metadata: {
-            customerEmail: sub.customer.email,
-            expiryDate: sub.expiryDate,
-            planName: sub.plan.name,
-            autoRenew: sub.autoRenew,
+      const expiringSubscriptions = await prisma.subscription.findMany({
+        where: {
+          status: SubscriptionStatus.ACTIVE,
+          expiryDate: {
+            gte: targetStart,
+            lte: targetEnd,
           },
         },
+        include: {
+          customer: true,
+          plan: true,
+        },
       });
+
+      console.log(`[Cron Job] Found ${expiringSubscriptions.length} subscriptions expiring in ${days} days.`);
+
+      for (const sub of expiringSubscriptions) {
+        try {
+          // Record audit log
+          await prisma.auditLog.create({
+            data: {
+              action: 'RENEWAL_REMINDER_SCHEDULED',
+              entity: 'SUBSCRIPTION',
+              entityId: sub.id,
+              metadata: {
+                daysBeforeExpiry: days,
+                customerEmail: sub.customer?.email,
+                expiryDate: sub.expiryDate,
+                planName: sub.plan.name,
+                autoRenew: sub.autoRenew,
+              },
+            },
+          });
+
+          // Queue persistent notification with stable idempotency
+          await notificationsService.queueSubscriptionExpiring(sub, days);
+          totalNotified++;
+        } catch (err: any) {
+          console.error(`[Cron Job Notice] Failed queuing reminder for sub ${sub.id}:`, err.message);
+        }
+      }
     }
 
-    return { notifiedCount: expiringSubscriptions.length };
+    return { notifiedCount: totalNotified, reminderIntervals: intervals };
   }
 
   /**
-   * 3. Expired Subscription Auto-Closure
+   * 3. Invoice Payment Due Soon Reminders
+   * Flags confirmed unpaid invoices approaching due date (e.g. 3, 1 days before)
+   */
+  async runInvoiceDueSoonReminders(intervals: number[] = [3, 1]): Promise<{ notifiedCount: number }> {
+    console.log(`[Cron Job] Checking invoices approaching due date across intervals: ${intervals.join(', ')} days...`);
+    const today = new Date();
+    let totalNotified = 0;
+
+    for (const days of intervals) {
+      const targetStart = new Date(today);
+      targetStart.setDate(targetStart.getDate() + days);
+      targetStart.setHours(0, 0, 0, 0);
+
+      const targetEnd = new Date(today);
+      targetEnd.setDate(targetEnd.getDate() + days);
+      targetEnd.setHours(23, 59, 59, 999);
+
+      const dueInvoices = await prisma.invoice.findMany({
+        where: {
+          status: InvoiceStatus.CONFIRMED,
+          balanceDue: { gt: 0 },
+          dueDate: {
+            gte: targetStart,
+            lte: targetEnd,
+          },
+        },
+        include: {
+          customer: true,
+        },
+      });
+
+      console.log(`[Cron Job] Found ${dueInvoices.length} invoices due in ${days} days.`);
+
+      for (const inv of dueInvoices) {
+        try {
+          await notificationsService.queueInvoiceDueSoon(inv, days);
+          totalNotified++;
+        } catch (err: any) {
+          console.error(`[Cron Job Notice] Failed queuing due reminder for inv ${inv.id}:`, err.message);
+        }
+      }
+    }
+
+    return { notifiedCount: totalNotified };
+  }
+
+  /**
+   * 4. Expired Subscription Auto-Closure
    * Automatically closes subscriptions that reached expiryDate with autoRenew=false
    */
   async runExpiredSubscriptionClosures(): Promise<{ closedCount: number }> {
@@ -182,8 +250,8 @@ export class BillingJobsService {
   }
 
   /**
-   * 4. Overdue Invoice Monitor
-   * Flags confirmed unpaid invoices past their due date as OVERDUE
+   * 5. Overdue Invoice Monitor
+   * Flags confirmed unpaid invoices past their due date as OVERDUE and queues email notice
    */
   async runOverdueInvoiceTracker(): Promise<{ markedOverdueCount: number }> {
     console.log('[Cron Job] Checking for overdue invoices...');
@@ -198,6 +266,9 @@ export class BillingJobsService {
         balanceDue: {
           gt: 0,
         },
+      },
+      include: {
+        customer: true,
       },
     });
 
@@ -220,10 +291,40 @@ export class BillingJobsService {
           },
         },
       });
+
+      // Queue overdue notification
+      try {
+        await notificationsService.queueInvoiceOverdue(inv);
+      } catch (err: any) {
+        console.error(`[Cron Job Notice] Failed queuing overdue notice for inv ${inv.id}:`, err.message);
+      }
     }
 
     return { markedOverdueCount: overdueInvoices.length };
   }
+
+  /**
+   * 6. Combined Reminder Runner
+   * Runs both subscription expiry reminders and invoice due date reminders
+   */
+  async runCombinedReminders(): Promise<{ notifiedCount: number; subscriptionsNotified: number; invoicesNotified: number }> {
+    const subResult = await this.runRenewalReminders();
+    const invResult = await this.runInvoiceDueSoonReminders();
+    const total = subResult.notifiedCount + invResult.notifiedCount;
+    return {
+      notifiedCount: total,
+      subscriptionsNotified: subResult.notifiedCount,
+      invoicesNotified: invResult.notifiedCount,
+    };
+  }
+
+  /**
+   * 7. Process pending notification queue
+   */
+  async runProcessNotifications(batchSize?: number) {
+    return notificationsService.processPendingNotifications(batchSize);
+  }
 }
 
 export const billingJobsService = new BillingJobsService();
+

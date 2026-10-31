@@ -18,10 +18,10 @@ export class CronJobManager {
     });
     this.tasks.push(billingTask);
 
-    // 2. Daily Renewal & Expiry Reminders (Default: 8:00 AM)
+    // 2. Daily Renewal & Invoice Due Reminders (Default: 8:00 AM)
     const reminderTask = cron.schedule(env.cronScheduleReminders, async () => {
-      console.log('[Cron Schedule Triggered]: Renewal Reminders');
-      await billingJobsService.runRenewalReminders();
+      console.log('[Cron Schedule Triggered]: Renewal & Invoice Reminders');
+      await billingJobsService.runCombinedReminders();
     });
     this.tasks.push(reminderTask);
 
@@ -38,6 +38,12 @@ export class CronJobManager {
       await billingJobsService.runOverdueInvoiceTracker();
     });
     this.tasks.push(overdueTask);
+
+    // 5. Automated Notification Processing Worker (Default: Every minute)
+    const notificationTask = cron.schedule(env.cronScheduleNotifications, async () => {
+      await billingJobsService.runProcessNotifications();
+    });
+    this.tasks.push(notificationTask);
 
     console.log('[Cron] All background tasks scheduled successfully.');
   }

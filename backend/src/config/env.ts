@@ -18,4 +18,15 @@ export const env = {
   cronScheduleBilling: process.env.CRON_SCHEDULE_BILLING || '0 2 * * *',
   cronScheduleReminders: process.env.CRON_SCHEDULE_REMINDERS || '0 8 * * *',
   cronScheduleLifecycle: process.env.CRON_SCHEDULE_LIFECYCLE || '0 0 * * *',
+  cronScheduleNotifications: process.env.CRON_SCHEDULE_NOTIFICATIONS || '* * * * *', // Every minute worker
+  // Email & Notification Configuration
+  emailEnabled: process.env.EMAIL_ENABLED === 'true',
+  emailHost: process.env.EMAIL_HOST || 'localhost',
+  emailPort: parseInt(process.env.EMAIL_PORT || '587', 10),
+  emailSecure: process.env.EMAIL_SECURE === 'true',
+  emailUser: process.env.EMAIL_USER || '',
+  emailPassword: process.env.EMAIL_PASSWORD || '',
+  emailFrom: process.env.EMAIL_FROM || 'Brightloop Billing <billing@brightloop.com>',
+  notificationMaxAttempts: parseInt(process.env.NOTIFICATION_MAX_ATTEMPTS || '3', 10),
+  notificationBatchSize: parseInt(process.env.NOTIFICATION_BATCH_SIZE || '25', 10),
 };

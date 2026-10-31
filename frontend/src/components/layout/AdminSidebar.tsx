@@ -26,6 +26,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({ subscriptionCount = 
     { name: 'Payments', path: '/admin/payments', icon: 'payments' },
     { name: 'Discounts', path: '/admin/discounts', icon: 'percent' },
     { name: 'Analytics', path: '/admin/analytics', icon: 'insights' },
+    { name: 'Notifications', path: '/admin/notifications', icon: 'notifications' },
     { name: 'Team Management', path: '/admin/team', icon: 'badge' },
     { name: 'Settings', path: '/admin/settings', icon: 'settings' },
   ];

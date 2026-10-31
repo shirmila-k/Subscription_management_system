@@ -18,8 +18,18 @@ router.post('/run-billing', async (_req, res, next) => {
 
 router.post('/run-reminders', async (_req, res, next) => {
   try {
-    const result = await billingJobsService.runRenewalReminders();
-    sendSuccess(res, 'Renewal reminders job executed manually', result);
+    const result = await billingJobsService.runCombinedReminders();
+    sendSuccess(res, 'Combined renewal, expiry and invoice reminders job executed manually', result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/run-notifications', async (req, res, next) => {
+  try {
+    const batchSize = req.body?.batchSize ? parseInt(req.body.batchSize, 10) : undefined;
+    const result = await billingJobsService.runProcessNotifications(batchSize);
+    sendSuccess(res, 'Pending notifications processed successfully', result);
   } catch (err) {
     next(err);
   }

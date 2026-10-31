@@ -17,6 +17,7 @@ import invoicesRoutes from './modules/invoices/invoices.routes';
 import paymentsRoutes from './modules/payments/payments.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
 import jobsRoutes from './modules/jobs/jobs.routes';
+import notificationsRoutes from './modules/notifications/notifications.routes';
 
 export const createApp = (): Application => {
   const app = express();
@@ -61,6 +62,7 @@ export const createApp = (): Application => {
   apiRouter.use('/payments', paymentsRoutes);
   apiRouter.use('/analytics', analyticsRoutes);
   apiRouter.use('/jobs', jobsRoutes);
+  apiRouter.use('/notifications', notificationsRoutes);
 
   app.use('/api/v1', apiRouter);
 

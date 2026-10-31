@@ -13,6 +13,8 @@ import {
   MonthlyRevenueTrendItem,
   ChurnAnalytics,
   PaymentMethodBreakdownResponse,
+  NotificationItem,
+  NotificationStats,
 } from '../types';
 
 export const authService = {
@@ -252,3 +254,65 @@ export const customerService = {
     return data;
   },
 };
+
+export const notificationsService = {
+  getNotifications: (params?: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    eventType?: string;
+    recipientEmail?: string;
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+  }) =>
+    axiosClient.get<{ data: NotificationItem[]; pagination: any }>('/notifications', { params }) as unknown as Promise<{
+      data: NotificationItem[];
+      pagination: { total: number; page: number; limit: number; totalPages: number };
+    }>,
+  getNotificationById: (id: string) =>
+    axiosClient.get<NotificationItem>(`/notifications/${id}`) as unknown as Promise<NotificationItem>,
+  getStats: () =>
+    axiosClient.get<NotificationStats>('/notifications/stats') as unknown as Promise<NotificationStats>,
+  retryNotification: (id: string) =>
+    axiosClient.post<NotificationItem>(`/notifications/${id}/retry`) as unknown as Promise<NotificationItem>,
+  cancelNotification: (id: string) =>
+    axiosClient.post<NotificationItem>(`/notifications/${id}/cancel`) as unknown as Promise<NotificationItem>,
+  processNotifications: (batchSize?: number) =>
+    axiosClient.post<{ processed: number; sent: number; failed: number; simulated: number }>('/notifications/process', { batchSize }) as unknown as Promise<{
+      processed: number;
+      sent: number;
+      failed: number;
+      simulated: number;
+    }>,
+};
+
+export const jobsService = {
+  runNotifications: (batchSize?: number) =>
+    axiosClient.post<{ processed: number; sent: number; failed: number; simulated: number }>('/jobs/run-notifications', { batchSize }) as unknown as Promise<{
+      processed: number;
+      sent: number;
+      failed: number;
+      simulated: number;
+    }>,
+  runReminders: () =>
+    axiosClient.post<{ notifiedCount: number; subscriptionsNotified: number; invoicesNotified: number }>('/jobs/run-reminders') as unknown as Promise<{
+      notifiedCount: number;
+      subscriptionsNotified: number;
+      invoicesNotified: number;
+    }>,
+  runBilling: () =>
+    axiosClient.post<{ processed: number; generatedInvoices: string[] }>('/jobs/run-billing') as unknown as Promise<{
+      processed: number;
+      generatedInvoices: string[];
+    }>,
+  runClosures: () =>
+    axiosClient.post<{ closedCount: number }>('/jobs/run-closures') as unknown as Promise<{
+      closedCount: number;
+    }>,
+  runOverdue: () =>
+    axiosClient.post<{ markedOverdueCount: number }>('/jobs/run-overdue') as unknown as Promise<{
+      markedOverdueCount: number;
+    }>,
+};
+

@@ -18,6 +18,7 @@ const routeTitles: Record<string, { category: string; title: string }> = {
   '/admin/payments': { category: 'Finance', title: 'Payments & Collections' },
   '/admin/discounts': { category: 'Marketing', title: 'Discounts & Offers' },
   '/admin/analytics': { category: 'Executive', title: 'Analytics & KPIs' },
+  '/admin/notifications': { category: 'Automation & Comms', title: 'Notification Center & Email Automation' },
   '/admin/team': { category: 'Organization', title: 'Team Management' },
   '/admin/settings': { category: 'System', title: 'Settings' },
 };

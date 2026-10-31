@@ -25,6 +25,7 @@ import { InvoicesList } from './pages/admin/InvoicesList';
 import { PaymentsPage } from './pages/admin/PaymentsPage';
 import { DiscountsPage } from './pages/admin/DiscountsPage';
 import { AnalyticsPage } from './pages/admin/AnalyticsPage';
+import { NotificationsPage } from './pages/admin/NotificationsPage';
 import { TeamPage } from './pages/admin/TeamPage';
 import { SettingsPage } from './pages/admin/SettingsPage';
 
@@ -102,6 +103,7 @@ export const App: React.FC = () => {
             <Route path="payments" element={<PaymentsPage />} />
             <Route path="discounts" element={<DiscountsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="notifications" element={<NotificationsPage />} />
             <Route path="team" element={<TeamPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

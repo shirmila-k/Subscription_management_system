@@ -16,6 +16,7 @@ import {
   addMonthsSafe,
 } from './billing.calculator';
 import { invoicesService } from '../invoices/invoices.service';
+import { notificationsService } from '../notifications/notifications.service';
 
 export interface CreateSubscriptionInput {
   customerId: string;
@@ -211,6 +212,12 @@ export class SubscriptionsService {
       },
     });
 
+    try {
+      await notificationsService.queueSubscriptionQuotation(updated);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue quotation notification: ${err.message}`);
+    }
+
     return updated;
   }
 
@@ -249,6 +256,12 @@ export class SubscriptionsService {
         performedById: customerId,
       },
     });
+
+    try {
+      await notificationsService.queueSubscriptionConfirmed(updated);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue confirmed notification: ${err.message}`);
+    }
 
     return updated;
   }
@@ -310,6 +323,12 @@ export class SubscriptionsService {
       },
     });
 
+    try {
+      await notificationsService.queueSubscriptionActivated(updated);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue activated notification: ${err.message}`);
+    }
+
     return updated;
   }
 
@@ -354,6 +373,12 @@ export class SubscriptionsService {
         performedById,
       },
     });
+
+    try {
+      await notificationsService.queueSubscriptionPaused(updated, reason);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue paused notification: ${err.message}`);
+    }
 
     return updated;
   }
@@ -400,6 +425,12 @@ export class SubscriptionsService {
         performedById,
       },
     });
+
+    try {
+      await notificationsService.queueSubscriptionResumed(updated);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue resumed notification: ${err.message}`);
+    }
 
     return updated;
   }
@@ -449,6 +480,12 @@ export class SubscriptionsService {
         performedById,
       },
     });
+
+    try {
+      await notificationsService.queueSubscriptionClosed(updated, reason);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue closed notification: ${err.message}`);
+    }
 
     return updated;
   }
@@ -522,6 +559,12 @@ export class SubscriptionsService {
       await invoicesService.generateInvoiceForSubscription(sub.id, currentAnchor);
     } catch (err: any) {
       console.warn(`[Renewal Note] ${err.message}`);
+    }
+
+    try {
+      await notificationsService.queueSubscriptionRenewed(updated);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue renewed notification: ${err.message}`);
     }
 
     return updated;

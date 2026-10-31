@@ -361,3 +361,69 @@ export interface Quotation {
   createdAt: string;
   updatedAt: string;
 }
+
+// -------------------------------------------------------------
+// PHASE 6: NOTIFICATIONS & EMAIL AUTOMATION
+// -------------------------------------------------------------
+
+export type NotificationStatus = 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELLED';
+
+export type NotificationEventType =
+  | 'SUBSCRIPTION_QUOTATION'
+  | 'SUBSCRIPTION_CONFIRMED'
+  | 'SUBSCRIPTION_ACTIVATED'
+  | 'SUBSCRIPTION_PAUSED'
+  | 'SUBSCRIPTION_RESUMED'
+  | 'SUBSCRIPTION_CLOSED'
+  | 'SUBSCRIPTION_RENEWED'
+  | 'SUBSCRIPTION_EXPIRING_SOON'
+  | 'INVOICE_GENERATED'
+  | 'INVOICE_DUE_SOON'
+  | 'INVOICE_OVERDUE'
+  | 'PAYMENT_SUCCESS'
+  | 'PAYMENT_FAILED'
+  | 'PAYMENT_REFUNDED';
+
+export interface NotificationItem {
+  id: string;
+  customerId?: string | null;
+  customer?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    companyName?: string | null;
+  } | null;
+  recipientEmail: string;
+  recipientName?: string | null;
+  eventType: NotificationEventType;
+  subject: string;
+  bodyText?: string | null;
+  bodyHtml?: string | null;
+  status: NotificationStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  scheduledAt: string;
+  sentAt?: string | null;
+  lastAttemptAt?: string | null;
+  nextRetryAt?: string | null;
+  relatedSubscriptionId?: string | null;
+  relatedInvoiceId?: string | null;
+  relatedPaymentId?: string | null;
+  idempotencyKey?: string | null;
+  providerMessageId?: string | null;
+  lastError?: string | null;
+  isSimulated: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationStats {
+  total: number;
+  pending: number;
+  processing: number;
+  sent: number;
+  failed: number;
+  cancelled: number;
+}
+

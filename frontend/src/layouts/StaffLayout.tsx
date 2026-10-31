@@ -21,33 +21,36 @@ export const StaffLayout: React.FC = () => {
   return (
     <div className="flex h-screen bg-[#FAF9FB] text-[#27212B] font-sans antialiased overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-[260px] bg-white border-r border-[#EAE5EC] flex flex-col justify-between shrink-0 shadow-xs z-30">
+      <aside className="w-[260px] bg-[#421747] text-white flex flex-col justify-between shrink-0 shadow-[0_1px_8px_rgba(0,0,0,0.06)] z-30">
         <div className="flex flex-col min-h-0">
-          <div className="h-16 px-5 flex items-center justify-between border-b border-[#EAE5EC] bg-white">
+          <div className="h-16 px-5 flex items-center justify-between border-b border-[#530D57] bg-[#421747]">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-[#6D286F] to-[#84418A] flex items-center justify-center font-bold text-white shadow-xs">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-[#6D286F] to-[#84418A] flex items-center justify-center font-bold text-white shadow-sm">
                 <span className="material-symbols-outlined text-[20px]">all_inclusive</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-base text-[#27212B] font-bold tracking-tight leading-none">Brightloop</span>
-                <span className="text-[10px] text-[#84418A] font-semibold tracking-wider uppercase mt-0.5">
+                <span className="text-base text-white font-bold tracking-tight leading-none">Brightloop</span>
+                <span className="text-[10px] text-[#D9A0D9] font-semibold tracking-wider uppercase mt-1">
                   Staff Workspace
                 </span>
               </div>
             </div>
+            <span className="px-2 py-0.5 rounded-full bg-[#84418A] text-white text-[10px] font-bold uppercase tracking-wider">
+              Staff
+            </span>
           </div>
 
-          <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+          <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
             {navItems.map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
                 end={item.path === '/staff'}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                  `flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     isActive
-                      ? 'bg-[#F3EAF5] text-[#6D286F]'
-                      : 'text-[#817986] hover:bg-[#FAF9FB] hover:text-[#27212B]'
+                      ? 'bg-[#6D286F] text-white shadow-sm'
+                      : 'text-[#E996E5] hover:bg-[#613465] hover:text-white'
                   }`
                 }
               >
@@ -58,26 +61,28 @@ export const StaffLayout: React.FC = () => {
           </nav>
         </div>
 
-        <div className="p-4 border-t border-[#EAE5EC] bg-[#FAF9FB]">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-[#F3EAF5] text-[#6D286F] font-bold flex items-center justify-center text-xs border border-[#EAE5EC]">
-              {user?.firstName?.charAt(0) || 'S'}
+        <div className="p-3 shrink-0 bg-[#421747] border-t border-[#530D57]">
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#613465] text-white">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-[#6D286F] border border-white/20 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                {user?.firstName?.charAt(0) || 'S'}
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-semibold text-white truncate">
+                  {user?.firstName ? `${user.firstName} ${user.lastName}` : 'Operations Staff'}
+                </span>
+                <span className="text-[10px] text-[#D9A0D9] truncate">Billing Specialist</span>
+              </div>
             </div>
-            <div className="flex flex-col min-w-0">
-              <p className="text-xs font-bold text-[#27212B] truncate">
-                {user?.firstName ? `${user.firstName} ${user.lastName}` : 'Operations Staff'}
-              </p>
-              <p className="text-[11px] text-[#817986] truncate">Billing Specialist</p>
-            </div>
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              className="text-[#D9A0D9] hover:text-white p-1 rounded transition"
+              aria-label="Sign Out"
+            >
+              <span className="material-symbols-outlined text-[18px]">logout</span>
+            </button>
           </div>
-
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors"
-          >
-            <span className="material-symbols-outlined text-[16px]">logout</span>
-            <span>Sign Out</span>
-          </button>
         </div>
       </aside>
 

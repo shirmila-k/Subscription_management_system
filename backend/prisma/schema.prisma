@@ -97,6 +97,31 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum NotificationEventType {
+  SUBSCRIPTION_QUOTATION
+  SUBSCRIPTION_CONFIRMED
+  SUBSCRIPTION_ACTIVATED
+  SUBSCRIPTION_PAUSED
+  SUBSCRIPTION_RESUMED
+  SUBSCRIPTION_CLOSED
+  SUBSCRIPTION_RENEWED
+  SUBSCRIPTION_EXPIRING_SOON
+  INVOICE_GENERATED
+  INVOICE_DUE_SOON
+  INVOICE_OVERDUE
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  PAYMENT_REFUNDED
+}
+
 // -------------------------------------------------------------
 // USER & ROLE MANAGEMENT
 // -------------------------------------------------------------
@@ -128,6 +153,7 @@ model User {
   invoices              Invoice[]
   payments              Payment[]
   auditLogs             AuditLog[]
+  notifications         Notification[]
 
   @@index([role])
   @@index([status])
@@ -556,4 +582,44 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// -------------------------------------------------------------
+// NOTIFICATIONS & DELIVERY AUDIT (PHASE 6)
+// -------------------------------------------------------------
+
+model Notification {
+  id                    String                @id @default(uuid())
+  customerId            String?
+  customer              User?                 @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  recipientEmail        String
+  recipientName         String?
+  eventType             NotificationEventType
+  subject               String
+  bodyText              String?               @db.Text
+  bodyHtml              String?               @db.Text
+  status                NotificationStatus    @default(PENDING)
+  attemptCount          Int                   @default(0)
+  maxAttempts           Int                   @default(3)
+  scheduledAt           DateTime              @default(now())
+  sentAt                DateTime?
+  lastAttemptAt         DateTime?
+  nextRetryAt           DateTime?
+  relatedSubscriptionId String?
+  relatedInvoiceId      String?
+  relatedPaymentId      String?
+  idempotencyKey        String?               @unique
+  providerMessageId     String?
+  lastError             String?               @db.Text
+  isSimulated           Boolean               @default(true)
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([customerId])
+  @@index([eventType])
+  @@index([recipientEmail])
+  @@index([createdAt])
+  @@map("notifications")
 }

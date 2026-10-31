@@ -2,6 +2,7 @@ import prisma from '../../config/db';
 import { InvoiceStatus, PaymentTerms, SubscriptionStatus } from '@prisma/client';
 import { pdfService } from './pdf.service';
 import { calculateNextBillingPeriod, calculateMonetaryBreakdown } from '../subscriptions/billing.calculator';
+import { notificationsService } from '../notifications/notifications.service';
 
 export class InvoicesService {
   /**
@@ -159,7 +160,7 @@ export class InvoicesService {
     const taxAmount = Number(sub.taxAmount);
     const totalAmount = Number(sub.totalAmount);
 
-    return prisma.$transaction(async (tx) => {
+    const createdInvoice = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
@@ -217,6 +218,14 @@ export class InvoicesService {
 
       return invoice;
     });
+
+    try {
+      await notificationsService.queueInvoiceGenerated(createdInvoice);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue invoice notification: ${err.message}`);
+    }
+
+    return createdInvoice;
   }
 
   /**

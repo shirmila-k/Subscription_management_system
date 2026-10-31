@@ -1,5 +1,6 @@
 import prisma from '../../config/db';
 import { PaymentMethod, PaymentStatus, InvoiceStatus, UserRole } from '@prisma/client';
+import { notificationsService } from '../notifications/notifications.service';
 
 export interface RecordPaymentInput {
   invoiceId: string;
@@ -76,7 +77,7 @@ export class PaymentsService {
     const paymentNumber = await this.generatePaymentNumber();
 
     // Use transaction to ensure payment record creation and invoice balance update are atomic
-    return prisma.$transaction(async (tx) => {
+    const resultPayment = await prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
           paymentNumber,
@@ -124,6 +125,18 @@ export class PaymentsService {
 
       return payment;
     });
+
+    try {
+      if (resultPayment.status === PaymentStatus.SUCCESS) {
+        await notificationsService.queuePaymentSuccess(resultPayment, invoice);
+      } else if (resultPayment.status === PaymentStatus.FAILED) {
+        await notificationsService.queuePaymentFailed(resultPayment, invoice, input.notes);
+      }
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue payment notification: ${err.message}`);
+    }
+
+    return resultPayment;
   }
 
   /**
@@ -132,7 +145,12 @@ export class PaymentsService {
   async refundPayment(paymentId: string, reason?: string, performedByUserId?: string) {
     const payment = await prisma.payment.findUnique({
       where: { id: paymentId },
-      include: { invoice: true },
+      include: {
+        customer: true,
+        invoice: {
+          include: { customer: true },
+        },
+      },
     });
 
     if (!payment) throw new Error('Payment record not found');
@@ -148,7 +166,7 @@ export class PaymentsService {
     const refundAmount = Number(payment.amount);
     const invoice = payment.invoice;
 
-    return prisma.$transaction(async (tx) => {
+    const refundResult = await prisma.$transaction(async (tx) => {
       const updatedPayment = await tx.payment.update({
         where: { id: paymentId },
         data: {
@@ -197,6 +215,14 @@ export class PaymentsService {
 
       return updatedPayment;
     });
+
+    try {
+      await notificationsService.queuePaymentRefunded(refundResult, payment.invoice, reason);
+    } catch (err: any) {
+      console.warn(`[Notification Notice] Failed to queue refund notification: ${err.message}`);
+    }
+
+    return refundResult;
   }
 
   /**
