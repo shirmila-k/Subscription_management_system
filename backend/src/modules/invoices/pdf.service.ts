@@ -63,17 +63,17 @@ export class PdfService {
         .fillColor('#0F172A')
         .fontSize(20)
         .font('Helvetica-Bold')
-        .text('INVOICE', 380, 50, { align: 'right' });
+        .text('INVOICE', 380, 50, { width: 170, align: 'right' });
 
       doc
         .fontSize(10)
         .font('Helvetica')
-        .text(`Invoice #: ${data.invoiceNumber}`, 380, 75, { align: 'right' })
-        .text(`Issue Date: ${new Date(data.issueDate).toLocaleDateString()}`, 380, 90, { align: 'right' })
-        .text(`Due Date: ${new Date(data.dueDate).toLocaleDateString()}`, 380, 105, { align: 'right' })
+        .text(`Invoice #: ${data.invoiceNumber}`, 380, 75, { width: 170, align: 'right' })
+        .text(`Issue Date: ${new Date(data.issueDate).toLocaleDateString()}`, 380, 90, { width: 170, align: 'right' })
+        .text(`Due Date: ${new Date(data.dueDate).toLocaleDateString()}`, 380, 105, { width: 170, align: 'right' })
         .fillColor(data.status === 'PAID' ? '#16A34A' : '#DC2626')
         .font('Helvetica-Bold')
-        .text(`Status: ${data.status}`, 380, 120, { align: 'right' });
+        .text(`Status: ${data.status}`, 380, 120, { width: 170, align: 'right' });
 
       doc.moveTo(50, 145).lineTo(550, 145).strokeColor('#E2E8F0').stroke();
 
@@ -112,61 +112,92 @@ export class PdfService {
         .text('Item Description', 60, tableTop)
         .text('Qty', 320, tableTop, { width: 40, align: 'right' })
         .text('Unit Price', 380, tableTop, { width: 70, align: 'right' })
-        .text('Total', 470, tableTop, { width: 70, align: 'right' });
+        .text('Total', 460, tableTop, { width: 85, align: 'right' });
 
       // Line Items Table Content
       let position = tableTop + 25;
       data.items.forEach((item) => {
+        doc.fontSize(9).font('Helvetica');
+        const descHeight = doc.heightOfString(item.description, { width: 250 });
+        const rowHeight = Math.max(descHeight, 18);
+
         doc
           .fillColor('#334155')
-          .fontSize(9)
-          .font('Helvetica')
           .text(item.description, 60, position, { width: 250 })
           .text(item.quantity.toString(), 320, position, { width: 40, align: 'right' })
           .text(`$${Number(item.unitPrice).toFixed(2)}`, 380, position, { width: 70, align: 'right' })
-          .text(`$${Number(item.amount).toFixed(2)}`, 470, position, { width: 70, align: 'right' });
+          .text(`$${Number(item.amount).toFixed(2)}`, 460, position, { width: 85, align: 'right' });
 
-        position += 24;
+        position += rowHeight + 10;
       });
 
       doc.moveTo(50, position + 5).lineTo(550, position + 5).strokeColor('#E2E8F0').stroke();
 
       // Financial Summary (Right column)
-      const summaryTop = position + 15;
+      const summaryTop = position + 18;
+      const labelX = 260;
+      const labelWidth = 190;
+      const valX = 460;
+      const valWidth = 85;
+
+      let currentY = summaryTop;
+
+      // Subtotal
       doc
         .fontSize(10)
         .font('Helvetica')
-        .text('Subtotal:', 340, summaryTop, { align: 'right' })
-        .text(`$${Number(data.subtotal).toFixed(2)}`, 470, summaryTop, { width: 70, align: 'right' });
+        .fillColor('#64748B')
+        .text('Subtotal:', labelX, currentY, { width: labelWidth, align: 'right' })
+        .fillColor('#0F172A')
+        .text(`$${Number(data.subtotal).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
+      currentY += 18;
+
+      // Discount
       doc
-        .text('Discount Applied:', 340, summaryTop + 16, { align: 'right' })
-        .text(`-$${Number(data.discountAmount).toFixed(2)}`, 470, summaryTop + 16, { width: 70, align: 'right' });
+        .fillColor('#64748B')
+        .text('Discount Applied:', labelX, currentY, { width: labelWidth, align: 'right' })
+        .fillColor('#0F172A')
+        .text(`-$${Number(data.discountAmount).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
+      currentY += 18;
+
+      // Tax
       doc
-        .text(`Tax (${data.taxRate}%):`, 340, summaryTop + 32, { align: 'right' })
-        .text(`$${Number(data.taxAmount).toFixed(2)}`, 470, summaryTop + 32, { width: 70, align: 'right' });
+        .fillColor('#64748B')
+        .text(`Tax (${data.taxRate}%):`, labelX, currentY, { width: labelWidth, align: 'right' })
+        .fillColor('#0F172A')
+        .text(`$${Number(data.taxAmount).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
+      currentY += 22;
+
+      // Total Amount Due
       doc
         .font('Helvetica-Bold')
         .fontSize(11)
         .fillColor('#0F172A')
-        .text('Total Amount Due:', 340, summaryTop + 52, { align: 'right' })
-        .text(`$${Number(data.totalAmount).toFixed(2)}`, 470, summaryTop + 52, { width: 70, align: 'right' });
+        .text('Total Amount Due:', labelX, currentY, { width: labelWidth, align: 'right' })
+        .text(`$${Number(data.totalAmount).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
+      currentY += 20;
+
+      // Amount Paid
       doc
         .font('Helvetica')
         .fontSize(10)
         .fillColor('#16A34A')
-        .text('Amount Paid:', 340, summaryTop + 70, { align: 'right' })
-        .text(`$${Number(data.amountPaid).toFixed(2)}`, 470, summaryTop + 70, { width: 70, align: 'right' });
+        .text('Amount Paid:', labelX, currentY, { width: labelWidth, align: 'right' })
+        .text(`$${Number(data.amountPaid).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
+      currentY += 18;
+
+      // Remaining Balance
       doc
         .font('Helvetica-Bold')
         .fontSize(11)
         .fillColor(Number(data.balanceDue) > 0 ? '#DC2626' : '#16A34A')
-        .text('Remaining Balance:', 340, summaryTop + 88, { align: 'right' })
-        .text(`$${Number(data.balanceDue).toFixed(2)}`, 470, summaryTop + 88, { width: 70, align: 'right' });
+        .text('Remaining Balance:', labelX, currentY, { width: labelWidth, align: 'right' })
+        .text(`$${Number(data.balanceDue).toFixed(2)}`, valX, currentY, { width: valWidth, align: 'right' });
 
       // Payment Terms / Footer
       doc
