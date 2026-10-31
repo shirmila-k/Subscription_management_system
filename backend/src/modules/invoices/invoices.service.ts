@@ -81,33 +81,8 @@ export class InvoicesService {
       sub.plan.billingCycleDays
     );
 
-    // DUPLICATE INVOICE PREVENTION:
-    // Check if an active/confirmed/paid invoice already exists for this subscription covering the current/same billing period
-    const existingDuplicate = await prisma.invoice.findFirst({
-      where: {
-        subscriptionId: sub.id,
-        status: { not: InvoiceStatus.VOID },
-        OR: [
-          {
-            billingPeriodStart: {
-              gte: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()),
-              lt: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + 1),
-            },
-          },
-          {
-            billingPeriodEnd: {
-              gt: new Date(),
-            },
-          },
-        ],
-      },
-    });
-
-    if (existingDuplicate) {
-      throw new Error(
-        `Duplicate invoice prevented: An active invoice '${existingDuplicate.invoiceNumber}' already exists for subscription '${sub.subscriptionNumber}' covering billing period until ${existingDuplicate.billingPeriodEnd.toISOString().split('T')[0]}`
-      );
-    }
+    const periodDateStr = `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, '0')}-${String(periodStart.getDate()).padStart(2, '0')}`;
+    const billingCycleKey = `SUB_${sub.id}_${periodDateStr}`;
 
     const invoiceNumber = await this.generateInvoiceNumber();
 
@@ -160,64 +135,120 @@ export class InvoicesService {
     const taxAmount = Number(sub.taxAmount);
     const totalAmount = Number(sub.totalAmount);
 
-    const createdInvoice = await prisma.$transaction(async (tx) => {
-      const invoice = await tx.invoice.create({
-        data: {
-          invoiceNumber,
-          subscriptionId: sub.id,
-          customerId: sub.customerId,
-          status: InvoiceStatus.CONFIRMED,
-          issueDate,
-          dueDate,
-          billingPeriodStart: periodStart,
-          billingPeriodEnd: periodEnd,
-          subtotal,
-          taxRate,
-          taxAmount,
-          discountAmount,
-          totalAmount,
-          amountPaid: 0,
-          balanceDue: totalAmount,
-          notes: sub.notes ? `Subscription: ${sub.subscriptionNumber}. ${sub.notes}` : `Subscription: ${sub.subscriptionNumber}`,
-          items: {
-            create: lineItemsData.map((li) => ({
-              description: li.description,
-              quantity: li.quantity,
-              unitPrice: li.unitPrice,
-              taxAmount: li.taxAmount,
-              discountAmount: li.discountAmount,
-              amount: li.amount,
-              lineTotal: li.lineTotal,
-            })),
+    let createdInvoice;
+    try {
+      createdInvoice = await prisma.$transaction(async (tx) => {
+        // 1. Lock subscription row using SELECT ... FOR UPDATE to serialize concurrent generation calls
+        const lockedSubs: any = await tx.$queryRaw`
+          SELECT id, status, nextBillingDate
+          FROM subscriptions
+          WHERE id = ${subscriptionId}
+          FOR UPDATE
+        `;
+
+        if (!lockedSubs || lockedSubs.length === 0) {
+          throw new Error(`Subscription with ID '${subscriptionId}' not found`);
+        }
+
+        const lockedSub = lockedSubs[0];
+        if (lockedSub.status === SubscriptionStatus.CLOSED || lockedSub.status === SubscriptionStatus.CANCELLED) {
+          throw new Error(`Cannot generate invoice for a subscription that is '${lockedSub.status}'`);
+        }
+
+        // 2. Check for duplicate invoice using billingCycleKey or period bounds inside locked transaction
+        const existingDuplicate = await tx.invoice.findFirst({
+          where: {
+            OR: [
+              { billingCycleKey },
+              {
+                subscriptionId: sub.id,
+                status: { not: InvoiceStatus.VOID },
+                billingPeriodStart: {
+                  gte: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()),
+                  lt: new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + 1),
+                },
+              },
+              {
+                subscriptionId: sub.id,
+                status: { not: InvoiceStatus.VOID },
+                billingPeriodEnd: { gt: new Date() },
+              },
+            ],
           },
-        },
-        include: {
-          customer: true,
-          items: true,
-          subscription: true,
-        },
-      });
-
-      // Update subscription next billing date if not set or if current period has caught up
-      if (!sub.nextBillingDate || sub.nextBillingDate <= periodStart) {
-        await tx.subscription.update({
-          where: { id: sub.id },
-          data: { nextBillingDate },
         });
-      }
 
-      await tx.subscriptionLifecycleLog.create({
-        data: {
-          subscriptionId: sub.id,
-          fromStatus: sub.status,
-          toStatus: sub.status,
-          action: 'INVOICE_GENERATED',
-          notes: `Invoice ${invoiceNumber} generated for period ${periodStart.toISOString().split('T')[0]} to ${periodEnd.toISOString().split('T')[0]}. Total: ₹${totalAmount.toFixed(2)}`,
-        },
+        if (existingDuplicate) {
+          throw new Error(
+            `Duplicate invoice prevented: An active invoice '${existingDuplicate.invoiceNumber}' already exists for subscription '${sub.subscriptionNumber}' covering billing period until ${existingDuplicate.billingPeriodEnd.toISOString().split('T')[0]}`
+          );
+        }
+
+        const invoice = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            subscriptionId: sub.id,
+            customerId: sub.customerId,
+            status: InvoiceStatus.CONFIRMED,
+            issueDate,
+            dueDate,
+            billingPeriodStart: periodStart,
+            billingPeriodEnd: periodEnd,
+            billingCycleKey,
+            subtotal,
+            taxRate,
+            taxAmount,
+            discountAmount,
+            totalAmount,
+            amountPaid: 0,
+            balanceDue: totalAmount,
+            notes: sub.notes ? `Subscription: ${sub.subscriptionNumber}. ${sub.notes}` : `Subscription: ${sub.subscriptionNumber}`,
+            items: {
+              create: lineItemsData.map((li) => ({
+                description: li.description,
+                quantity: li.quantity,
+                unitPrice: li.unitPrice,
+                taxAmount: li.taxAmount,
+                discountAmount: li.discountAmount,
+                amount: li.amount,
+                lineTotal: li.lineTotal,
+              })),
+            },
+          },
+          include: {
+            customer: true,
+            items: true,
+            subscription: true,
+          },
+        });
+
+        // 3. Update subscription next billing date atomically if current period has caught up
+        if (!lockedSub.nextBillingDate || new Date(lockedSub.nextBillingDate) <= periodStart) {
+          await tx.subscription.update({
+            where: { id: sub.id },
+            data: { nextBillingDate },
+          });
+        }
+
+        await tx.subscriptionLifecycleLog.create({
+          data: {
+            subscriptionId: sub.id,
+            fromStatus: sub.status,
+            toStatus: sub.status,
+            action: 'INVOICE_GENERATED',
+            notes: `Invoice ${invoiceNumber} generated for period ${periodStart.toISOString().split('T')[0]} to ${periodEnd.toISOString().split('T')[0]}. Total: ₹${totalAmount.toFixed(2)}`,
+          },
+        });
+
+        return invoice;
       });
-
-      return invoice;
-    });
+    } catch (err: any) {
+      if (err.code === 'P2002' && err.meta?.target?.includes('billingCycleKey')) {
+        throw new Error(
+          `Duplicate invoice prevented: An active invoice already exists for subscription '${sub.subscriptionNumber}' for this billing period.`
+        );
+      }
+      throw err;
+    }
 
     try {
       await notificationsService.queueInvoiceGenerated(createdInvoice);
@@ -352,7 +383,7 @@ export class InvoicesService {
       data: {
         status,
         notes: notes ? `${invoice.notes || ''}\n[Status Change]: ${notes}` : invoice.notes,
-        ...(status === InvoiceStatus.VOID && { balanceDue: 0 }),
+        ...(status === InvoiceStatus.VOID && { balanceDue: 0, billingCycleKey: null }),
       },
       include: { customer: true, items: true, payments: true },
     });

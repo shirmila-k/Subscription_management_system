@@ -59,29 +59,6 @@ export class BillingJobsService {
 
         const invoice = await invoicesService.generateInvoiceForSubscription(sub.id);
         generatedInvoices.push(invoice.invoiceNumber);
-
-        // Advance nextBillingDate using frequency-aware calculator
-        const currentPeriodAnchor = sub.nextBillingDate ? new Date(sub.nextBillingDate) : today;
-        const { nextBillingDate } = calculateNextBillingPeriod(
-          currentPeriodAnchor,
-          sub.plan.billingFrequency,
-          sub.plan.billingCycleDays
-        );
-
-        await prisma.subscription.update({
-          where: { id: sub.id },
-          data: { nextBillingDate },
-        });
-
-        await prisma.subscriptionLifecycleLog.create({
-          data: {
-            subscriptionId: sub.id,
-            fromStatus: SubscriptionStatus.ACTIVE,
-            toStatus: SubscriptionStatus.ACTIVE,
-            action: 'AUTOMATED_BILLING_INVOICED',
-            notes: `Auto-generated Invoice ${invoice.invoiceNumber}. Next billing scheduled for ${nextBillingDate.toISOString().split('T')[0]}`,
-          },
-        });
       } catch (err: any) {
         console.error(`[Cron Job Notice] Subscription ${sub.id}: ${err.message}`);
       }

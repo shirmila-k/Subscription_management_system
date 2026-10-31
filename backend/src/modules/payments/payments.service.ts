@@ -22,67 +22,74 @@ export class PaymentsService {
   }
 
   /**
-   * Record a payment against an invoice and reconcile balances atomically
+   * Record a payment against an invoice and reconcile balances atomically with row-level locking
    */
   async recordPayment(
     input: RecordPaymentInput,
     performedByUserId?: string,
     userRole?: UserRole
   ) {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: input.invoiceId },
-      include: { customer: true },
-    });
-
-    if (!invoice) throw new Error('Target invoice not found');
-
-    // Access control: If a customer is recording payment, ensure it belongs to them
-    if (userRole === UserRole.CUSTOMER && invoice.customerId !== performedByUserId) {
-      throw new Error('Unauthorized: You can only record payments for your own invoices');
-    }
-
-    if (invoice.status === InvoiceStatus.PAID) {
-      throw new Error('This invoice is already fully paid');
-    }
-
-    if (invoice.status === InvoiceStatus.VOID) {
-      throw new Error('Cannot apply payment to a void invoice');
-    }
-
     const payAmount = Math.round(Number(input.amount) * 100) / 100;
-    if (payAmount <= 0) {
+    if (payAmount <= 0 || isNaN(payAmount)) {
       throw new Error('Payment amount must be greater than zero');
-    }
-
-    const currentBalance = Number(invoice.balanceDue);
-    if (payAmount > currentBalance + 0.01) {
-      throw new Error(
-        `Payment amount (₹${payAmount.toFixed(2)}) exceeds remaining balance (₹${currentBalance.toFixed(2)})`
-      );
-    }
-
-    // DUPLICATE PAYMENT PREVENTION:
-    // If a transaction reference is provided, ensure it was not already processed
-    if (input.transactionReference && input.transactionReference.trim().length > 0) {
-      const existingPayment = await prisma.payment.findUnique({
-        where: { transactionReference: input.transactionReference.trim() },
-      });
-      if (existingPayment) {
-        throw new Error(
-          `Duplicate payment prevented: A payment with reference '${input.transactionReference}' already exists (ID: ${existingPayment.paymentNumber})`
-        );
-      }
     }
 
     const paymentNumber = await this.generatePaymentNumber();
 
-    // Use transaction to ensure payment record creation and invoice balance update are atomic
-    const resultPayment = await prisma.$transaction(async (tx) => {
+    // Use transaction with SELECT ... FOR UPDATE to prevent race conditions during concurrent payments
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Acquire exclusive lock on target invoice row in MySQL InnoDB
+      const lockedInvoices: any = await tx.$queryRaw`
+        SELECT id, invoiceNumber, customerId, status, totalAmount, amountPaid, balanceDue
+        FROM invoices
+        WHERE id = ${input.invoiceId}
+        FOR UPDATE
+      `;
+
+      if (!lockedInvoices || lockedInvoices.length === 0) {
+        throw new Error('Target invoice not found');
+      }
+
+      const lockedInvoice = lockedInvoices[0];
+
+      // Access control: If a customer is recording payment, ensure it belongs to them
+      if (userRole === UserRole.CUSTOMER && lockedInvoice.customerId !== performedByUserId) {
+        throw new Error('Unauthorized: You can only record payments for your own invoices');
+      }
+
+      if (lockedInvoice.status === InvoiceStatus.PAID) {
+        throw new Error('This invoice is already fully paid');
+      }
+
+      if (lockedInvoice.status === InvoiceStatus.VOID) {
+        throw new Error('Cannot apply payment to a void invoice');
+      }
+
+      const currentBalance = Number(lockedInvoice.balanceDue);
+      if (payAmount > currentBalance + 0.01) {
+        throw new Error(
+          `Payment amount (₹${payAmount.toFixed(2)}) exceeds remaining balance (₹${currentBalance.toFixed(2)})`
+        );
+      }
+
+      // 2. Check duplicate transaction reference inside the transaction
+      if (input.transactionReference && input.transactionReference.trim().length > 0) {
+        const existingPayment = await tx.payment.findUnique({
+          where: { transactionReference: input.transactionReference.trim() },
+        });
+        if (existingPayment) {
+          throw new Error(
+            `Duplicate payment prevented: A payment with reference '${input.transactionReference}' already exists (ID: ${existingPayment.paymentNumber})`
+          );
+        }
+      }
+
+      // 3. Create payment record atomically
       const payment = await tx.payment.create({
         data: {
           paymentNumber,
-          invoiceId: invoice.id,
-          customerId: invoice.customerId,
+          invoiceId: lockedInvoice.id,
+          customerId: lockedInvoice.customerId,
           amount: payAmount,
           currency: input.currency || 'INR',
           paymentMethod: input.paymentMethod,
@@ -94,16 +101,17 @@ export class PaymentsService {
         },
       });
 
-      const updatedAmountPaid = Math.round((Number(invoice.amountPaid) + payAmount) * 100) / 100;
+      // 4. Recalculate amountPaid and balanceDue from verified locked state
+      const updatedAmountPaid = Math.round((Number(lockedInvoice.amountPaid) + payAmount) * 100) / 100;
       const updatedBalanceDue = Math.max(0, Math.round((currentBalance - payAmount) * 100) / 100);
       const isFullyPaid = updatedBalanceDue <= 0.001;
 
       await tx.invoice.update({
-        where: { id: invoice.id },
+        where: { id: lockedInvoice.id },
         data: {
           amountPaid: updatedAmountPaid,
           balanceDue: updatedBalanceDue,
-          status: isFullyPaid ? InvoiceStatus.PAID : invoice.status,
+          status: isFullyPaid ? InvoiceStatus.PAID : lockedInvoice.status,
         },
       });
 
@@ -115,7 +123,7 @@ export class PaymentsService {
           entityId: payment.id,
           metadata: {
             paymentNumber,
-            invoiceNumber: invoice.invoiceNumber,
+            invoiceNumber: lockedInvoice.invoiceNumber,
             amount: payAmount,
             remainingBalance: updatedBalanceDue,
             isFullyPaid,
@@ -123,73 +131,92 @@ export class PaymentsService {
         },
       });
 
-      return payment;
+      return { payment, invoiceId: lockedInvoice.id };
     });
 
+    // 5. Post-transaction notification dispatch (only after commit succeeds)
     try {
-      if (resultPayment.status === PaymentStatus.SUCCESS) {
-        await notificationsService.queuePaymentSuccess(resultPayment, invoice);
-      } else if (resultPayment.status === PaymentStatus.FAILED) {
-        await notificationsService.queuePaymentFailed(resultPayment, invoice, input.notes);
+      if (result.payment.status === PaymentStatus.SUCCESS) {
+        const invoiceForEmail = await prisma.invoice.findUnique({
+          where: { id: result.invoiceId },
+          include: { customer: true },
+        });
+        if (invoiceForEmail) {
+          await notificationsService.queuePaymentSuccess(result.payment, invoiceForEmail);
+        }
       }
     } catch (err: any) {
       console.warn(`[Notification Notice] Failed to queue payment notification: ${err.message}`);
     }
 
-    return resultPayment;
+    return result.payment;
   }
 
   /**
-   * Refund a previously successful payment
+   * Refund a previously successful payment with pessimistic row-level locking
    */
   async refundPayment(paymentId: string, reason?: string, performedByUserId?: string) {
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: {
-        customer: true,
-        invoice: {
-          include: { customer: true },
-        },
-      },
-    });
-
-    if (!payment) throw new Error('Payment record not found');
-
-    if (payment.status === PaymentStatus.REFUNDED) {
-      throw new Error('This payment has already been refunded');
-    }
-
-    if (payment.status !== PaymentStatus.SUCCESS) {
-      throw new Error(`Cannot refund payment in '${payment.status}' status`);
-    }
-
-    const refundAmount = Number(payment.amount);
-    const invoice = payment.invoice;
-
     const refundResult = await prisma.$transaction(async (tx) => {
+      // 1. Lock payment row
+      const lockedPayments: any = await tx.$queryRaw`
+        SELECT id, paymentNumber, invoiceId, customerId, amount, status, notes
+        FROM payments
+        WHERE id = ${paymentId}
+        FOR UPDATE
+      `;
+
+      if (!lockedPayments || lockedPayments.length === 0) {
+        throw new Error('Payment record not found');
+      }
+
+      const lockedPayment = lockedPayments[0];
+
+      if (lockedPayment.status === PaymentStatus.REFUNDED) {
+        throw new Error('This payment has already been refunded');
+      }
+
+      if (lockedPayment.status !== PaymentStatus.SUCCESS) {
+        throw new Error(`Cannot refund payment in '${lockedPayment.status}' status`);
+      }
+
+      // 2. Lock invoice row
+      const lockedInvoices: any = await tx.$queryRaw`
+        SELECT id, invoiceNumber, status, dueDate, amountPaid, balanceDue
+        FROM invoices
+        WHERE id = ${lockedPayment.invoiceId}
+        FOR UPDATE
+      `;
+
+      if (!lockedInvoices || lockedInvoices.length === 0) {
+        throw new Error('Associated invoice record not found');
+      }
+
+      const lockedInvoice = lockedInvoices[0];
+      const refundAmount = Number(lockedPayment.amount);
+
       const updatedPayment = await tx.payment.update({
         where: { id: paymentId },
         data: {
           status: PaymentStatus.REFUNDED,
           notes: reason
-            ? `${payment.notes || ''}\n[Refund Reason]: ${reason}`
-            : `${payment.notes || ''}\n[Refunded on ${new Date().toISOString()}]`,
+            ? `${lockedPayment.notes || ''}\n[Refund Reason]: ${reason}`
+            : `${lockedPayment.notes || ''}\n[Refunded on ${new Date().toISOString()}]`,
         },
       });
 
       // Restore invoice balance
-      const newAmountPaid = Math.max(0, Math.round((Number(invoice.amountPaid) - refundAmount) * 100) / 100);
-      const newBalanceDue = Math.round((Number(invoice.balanceDue) + refundAmount) * 100) / 100;
+      const newAmountPaid = Math.max(0, Math.round((Number(lockedInvoice.amountPaid) - refundAmount) * 100) / 100);
+      const newBalanceDue = Math.round((Number(lockedInvoice.balanceDue) + refundAmount) * 100) / 100;
 
       // If the invoice was marked PAID, restore it to CONFIRMED (or OVERDUE if past due)
-      let restoredStatus = invoice.status;
-      if (invoice.status === InvoiceStatus.PAID) {
-        const isPastDue = invoice.dueDate < new Date();
+      let restoredStatus = lockedInvoice.status;
+      if (lockedInvoice.status === InvoiceStatus.PAID) {
+        const isPastDue = new Date(lockedInvoice.dueDate) < new Date();
         restoredStatus = isPastDue ? InvoiceStatus.OVERDUE : InvoiceStatus.CONFIRMED;
       }
 
       await tx.invoice.update({
-        where: { id: invoice.id },
+        where: { id: lockedInvoice.id },
         data: {
           amountPaid: newAmountPaid,
           balanceDue: newBalanceDue,
@@ -202,10 +229,10 @@ export class PaymentsService {
           userId: performedByUserId || null,
           action: 'PAYMENT_REFUNDED',
           entity: 'PAYMENT',
-          entityId: payment.id,
+          entityId: lockedPayment.id,
           metadata: {
-            paymentNumber: payment.paymentNumber,
-            invoiceNumber: invoice.invoiceNumber,
+            paymentNumber: lockedPayment.paymentNumber,
+            invoiceNumber: lockedInvoice.invoiceNumber,
             refundAmount,
             restoredBalanceDue: newBalanceDue,
             reason,
@@ -213,16 +240,22 @@ export class PaymentsService {
         },
       });
 
-      return updatedPayment;
+      return { updatedPayment, invoiceId: lockedInvoice.id };
     });
 
     try {
-      await notificationsService.queuePaymentRefunded(refundResult, payment.invoice, reason);
+      const invoiceForEmail = await prisma.invoice.findUnique({
+        where: { id: refundResult.invoiceId },
+        include: { customer: true },
+      });
+      if (invoiceForEmail) {
+        await notificationsService.queuePaymentRefunded(refundResult.updatedPayment, invoiceForEmail, reason);
+      }
     } catch (err: any) {
       console.warn(`[Notification Notice] Failed to queue refund notification: ${err.message}`);
     }
 
-    return refundResult;
+    return refundResult.updatedPayment;
   }
 
   /**

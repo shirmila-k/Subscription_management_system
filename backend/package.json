@@ -12,7 +12,7 @@
     "prisma:push": "npx prisma db push",
     "prisma:studio": "npx prisma studio",
     "prisma:seed": "npx tsx prisma/seed.ts",
-    "test": "npx tsx --test --test-concurrency=1 src/modules/auth/auth.test.ts src/modules/products/products_plans.test.ts src/modules/quotations/quotations_discounts.test.ts src/modules/subscriptions/subscriptions_lifecycle.test.ts src/modules/analytics/analytics.test.ts src/modules/notifications/notifications.test.ts"
+    "test": "npx tsx --test --test-concurrency=1 src/modules/auth/auth.test.ts src/modules/products/products_plans.test.ts src/modules/quotations/quotations_discounts.test.ts src/modules/subscriptions/subscriptions_lifecycle.test.ts src/modules/analytics/analytics.test.ts src/modules/notifications/notifications.test.ts src/modules/payments/remediation_audit.test.ts"
   },
   "keywords": [
     "subscription-management",
