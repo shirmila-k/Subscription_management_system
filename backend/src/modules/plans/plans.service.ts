@@ -1,26 +1,51 @@
-import prisma from '../../config/prisma';
-import { NotFoundError } from '../../utils/errors';
+import prisma from '../../config/db';
 import { BillingFrequency } from '@prisma/client';
 
+export interface CreatePlanInput {
+  productId: string;
+  variantId?: string;
+  name: string;
+  code: string;
+  description?: string;
+  billingFrequency: BillingFrequency;
+  billingCycleDays?: number;
+  price: number;
+  currency?: string;
+  minQuantity?: number;
+  availableFrom?: Date;
+  availableTo?: Date;
+  autoCloseOnExpiry?: boolean;
+  canPause?: boolean;
+  autoRenew?: boolean;
+  trialDays?: number;
+  isActive?: boolean;
+}
+
+export interface UpdatePlanInput extends Partial<CreatePlanInput> {}
+
 export class PlansService {
-  public static async getAll(filter?: {
-    productId?: string;
-    billingFrequency?: BillingFrequency;
-    isActive?: boolean;
-  }) {
+  private calculateCycleDays(frequency: BillingFrequency, customDays?: number): number {
+    if (customDays && customDays > 0) return customDays;
+    switch (frequency) {
+      case BillingFrequency.DAILY:
+        return 1;
+      case BillingFrequency.WEEKLY:
+        return 7;
+      case BillingFrequency.MONTHLY:
+        return 30;
+      case BillingFrequency.YEARLY:
+        return 365;
+      default:
+        return 30;
+    }
+  }
+
+  async getAllPlans(params?: { productId?: string; frequency?: BillingFrequency; isActive?: boolean }) {
     const where: any = {};
 
-    if (filter?.isActive !== undefined) {
-      where.isActive = filter.isActive;
-    }
-
-    if (filter?.productId) {
-      where.productId = filter.productId;
-    }
-
-    if (filter?.billingFrequency) {
-      where.billingFrequency = filter.billingFrequency;
-    }
+    if (params?.productId) where.productId = params.productId;
+    if (params?.frequency) where.billingFrequency = params.frequency;
+    if (params?.isActive !== undefined) where.isActive = params.isActive;
 
     return prisma.plan.findMany({
       where,
@@ -29,17 +54,17 @@ export class PlansService {
           select: {
             id: true,
             name: true,
+            code: true,
             brand: true,
-            category: true,
           },
         },
         variant: true,
       },
-      orderBy: { cost: 'asc' },
+      orderBy: { price: 'asc' },
     });
   }
 
-  public static async getById(id: string) {
+  async getPlanById(id: string) {
     const plan = await prisma.plan.findUnique({
       where: { id },
       include: {
@@ -49,46 +74,34 @@ export class PlansService {
     });
 
     if (!plan) {
-      throw new NotFoundError(`Plan with ID ${id} not found.`);
+      throw new Error(`Plan with ID '${id}' not found`);
     }
 
     return plan;
   }
 
-  public static async create(data: {
-    productId: string;
-    variantId?: string;
-    name: string;
-    description?: string;
-    billingFrequency: BillingFrequency;
-    cost: number;
-    currency?: string;
-    minimumQuantity?: number;
-    validFrom?: Date;
-    validUntil?: Date;
-    autoClose?: boolean;
-    autoRenew?: boolean;
-    pauseAllowed?: boolean;
-    trialPeriodDays?: number;
-    gracePeriodDays?: number;
-  }) {
+  async createPlan(input: CreatePlanInput) {
+    const cycleDays = this.calculateCycleDays(input.billingFrequency, input.billingCycleDays);
+
     return prisma.plan.create({
       data: {
-        productId: data.productId,
-        variantId: data.variantId,
-        name: data.name,
-        description: data.description,
-        billingFrequency: data.billingFrequency,
-        cost: data.cost,
-        currency: data.currency || 'USD',
-        minimumQuantity: data.minimumQuantity || 1,
-        validFrom: data.validFrom,
-        validUntil: data.validUntil,
-        autoClose: data.autoClose ?? true,
-        autoRenew: data.autoRenew ?? true,
-        pauseAllowed: data.pauseAllowed ?? true,
-        trialPeriodDays: data.trialPeriodDays ?? 0,
-        gracePeriodDays: data.gracePeriodDays ?? 7,
+        productId: input.productId,
+        variantId: input.variantId || null,
+        name: input.name,
+        code: input.code.toUpperCase(),
+        description: input.description,
+        billingFrequency: input.billingFrequency,
+        billingCycleDays: cycleDays,
+        price: input.price,
+        currency: input.currency || 'USD',
+        minQuantity: input.minQuantity ?? 1,
+        availableFrom: input.availableFrom ? new Date(input.availableFrom) : null,
+        availableTo: input.availableTo ? new Date(input.availableTo) : null,
+        autoCloseOnExpiry: input.autoCloseOnExpiry ?? true,
+        canPause: input.canPause ?? true,
+        autoRenew: input.autoRenew ?? true,
+        trialDays: input.trialDays ?? 0,
+        isActive: input.isActive ?? true,
       },
       include: {
         product: true,
@@ -97,25 +110,12 @@ export class PlansService {
     });
   }
 
-  public static async update(
-    id: string,
-    data: {
-      name?: string;
-      description?: string;
-      cost?: number;
-      billingFrequency?: BillingFrequency;
-      minimumQuantity?: number;
-      validFrom?: Date;
-      validUntil?: Date;
-      autoClose?: boolean;
-      autoRenew?: boolean;
-      pauseAllowed?: boolean;
-      trialPeriodDays?: number;
-      gracePeriodDays?: number;
-      isActive?: boolean;
+  async updatePlan(id: string, input: UpdatePlanInput) {
+    const data: any = { ...input };
+    if (input.code) data.code = input.code.toUpperCase();
+    if (input.billingFrequency) {
+      data.billingCycleDays = this.calculateCycleDays(input.billingFrequency, input.billingCycleDays);
     }
-  ) {
-    await this.getById(id);
 
     return prisma.plan.update({
       where: { id },
@@ -127,11 +127,11 @@ export class PlansService {
     });
   }
 
-  public static async delete(id: string) {
-    await this.getById(id);
-
+  async deletePlan(id: string) {
     return prisma.plan.delete({
       where: { id },
     });
   }
 }
+
+export const plansService = new PlansService();

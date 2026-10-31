@@ -1,104 +1,88 @@
 import { Request, Response, NextFunction } from 'express';
-import { ProductsService } from './products.service';
-import { sendSuccess } from '../../utils/response';
-import { BadRequestError } from '../../utils/errors';
+import { productsService } from './products.service';
+import { sendSuccess, sendError } from '../../utils/response';
 
 export class ProductsController {
-  public static async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { search, brand, category, isActive } = req.query;
-      const products = await ProductsService.getAll({
+      const products = await productsService.getAllProducts({
         search: search as string,
         brand: brand as string,
         category: category as string,
         isActive: isActive !== undefined ? isActive === 'true' : undefined,
       });
-      return sendSuccess(res, products);
-    } catch (error) {
+      sendSuccess(res, 'Products retrieved successfully', products);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async getById(req: Request, res: Response, next: NextFunction) {
+  async getById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const product = await ProductsService.getById(req.params.id);
-      return sendSuccess(res, product);
-    } catch (error) {
+      const product = await productsService.getProductById(req.params.id);
+      sendSuccess(res, 'Product retrieved successfully', product);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
+    }
+  }
+
+  async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const product = await productsService.createProduct(req.body);
+      sendSuccess(res, 'Product created successfully', product, 201);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async create(req: Request, res: Response, next: NextFunction) {
+  async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { name, sku, description, brand, category, variants } = req.body;
-      if (!name || !sku) {
-        throw new BadRequestError('Product name and SKU are required.');
-      }
-      const product = await ProductsService.create({
-        name,
-        sku,
-        description,
-        brand,
-        category,
-        variants,
+      const updated = await productsService.updateProduct(req.params.id, req.body);
+      sendSuccess(res, 'Product updated successfully', updated);
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await productsService.deleteProduct(req.params.id);
+      sendSuccess(res, 'Product deleted successfully');
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async addVariant(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const variant = await productsService.addVariant({
+        productId: req.params.id,
+        ...req.body,
       });
-      return sendSuccess(res, product, 'Product created successfully', 201);
-    } catch (error) {
+      sendSuccess(res, 'Variant added successfully', variant, 201);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async update(req: Request, res: Response, next: NextFunction) {
+  async updateVariant(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const product = await ProductsService.update(req.params.id, req.body);
-      return sendSuccess(res, product, 'Product updated successfully');
-    } catch (error) {
+      const variant = await productsService.updateVariant(req.params.variantId, req.body);
+      sendSuccess(res, 'Variant updated successfully', variant);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async delete(req: Request, res: Response, next: NextFunction) {
+  async deleteVariant(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      await ProductsService.delete(req.params.id);
-      return sendSuccess(res, null, 'Product deleted successfully');
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async addVariant(req: Request, res: Response, next: NextFunction) {
-    try {
-      const { name, sku, attributes, extraCost } = req.body;
-      if (!name || !sku) {
-        throw new BadRequestError('Variant name and SKU are required.');
-      }
-      const variant = await ProductsService.addVariant(req.params.id, {
-        name,
-        sku,
-        attributes,
-        extraCost,
-      });
-      return sendSuccess(res, variant, 'Variant added successfully', 201);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async updateVariant(req: Request, res: Response, next: NextFunction) {
-    try {
-      const variant = await ProductsService.updateVariant(req.params.variantId, req.body);
-      return sendSuccess(res, variant, 'Variant updated successfully');
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async deleteVariant(req: Request, res: Response, next: NextFunction) {
-    try {
-      await ProductsService.deleteVariant(req.params.variantId);
-      return sendSuccess(res, null, 'Variant deleted successfully');
-    } catch (error) {
+      await productsService.deleteVariant(req.params.variantId);
+      sendSuccess(res, 'Variant deleted successfully');
+    } catch (error: any) {
       next(error);
     }
   }
 }
+
+export const productsController = new ProductsController();

@@ -1,32 +1,58 @@
-import prisma from '../../config/prisma';
-import { NotFoundError } from '../../utils/errors';
+import prisma from '../../config/db';
+
+export interface CreateProductInput {
+  name: string;
+  code: string;
+  description?: string;
+  category?: string;
+  brand?: string;
+  isActive?: boolean;
+  variants?: {
+    name: string;
+    sku: string;
+    priceAdjustment?: number;
+    attributes?: any;
+  }[];
+}
+
+export interface UpdateProductInput {
+  name?: string;
+  code?: string;
+  description?: string;
+  category?: string;
+  brand?: string;
+  isActive?: boolean;
+}
+
+export interface CreateVariantInput {
+  productId: string;
+  name: string;
+  sku: string;
+  priceAdjustment?: number;
+  attributes?: any;
+}
 
 export class ProductsService {
-  public static async getAll(filter?: {
-    search?: string;
-    brand?: string;
-    category?: string;
-    isActive?: boolean;
-  }) {
+  async getAllProducts(params?: { search?: string; brand?: string; category?: string; isActive?: boolean }) {
     const where: any = {};
 
-    if (filter?.isActive !== undefined) {
-      where.isActive = filter.isActive;
+    if (params?.isActive !== undefined) {
+      where.isActive = params.isActive;
     }
 
-    if (filter?.brand) {
-      where.brand = { contains: filter.brand };
+    if (params?.brand) {
+      where.brand = { contains: params.brand };
     }
 
-    if (filter?.category) {
-      where.category = { contains: filter.category };
+    if (params?.category) {
+      where.category = { contains: params.category };
     }
 
-    if (filter?.search) {
+    if (params?.search) {
       where.OR = [
-        { name: { contains: filter.search } },
-        { sku: { contains: filter.search } },
-        { description: { contains: filter.search } },
+        { name: { contains: params.search } },
+        { code: { contains: params.search } },
+        { description: { contains: params.search } },
       ];
     }
 
@@ -42,7 +68,7 @@ export class ProductsService {
     });
   }
 
-  public static async getById(id: string) {
+  async getProductById(id: string) {
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
@@ -52,42 +78,29 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundError(`Product with ID ${id} not found.`);
+      throw new Error(`Product with ID '${id}' not found`);
     }
 
     return product;
   }
 
-  public static async create(data: {
-    name: string;
-    description?: string;
-    sku: string;
-    brand?: string;
-    category?: string;
-    variants?: Array<{
-      name: string;
-      sku: string;
-      attributes?: any;
-      extraCost?: number;
-    }>;
-  }) {
+  async createProduct(input: CreateProductInput) {
     return prisma.product.create({
       data: {
-        name: data.name,
-        description: data.description,
-        sku: data.sku,
-        brand: data.brand,
-        category: data.category,
-        variants: data.variants
-          ? {
-              create: data.variants.map((v) => ({
-                name: v.name,
-                sku: v.sku,
-                attributes: v.attributes,
-                extraCost: v.extraCost || 0,
-              })),
-            }
-          : undefined,
+        name: input.name,
+        code: input.code.toUpperCase(),
+        description: input.description,
+        category: input.category,
+        brand: input.brand || 'Brightloop',
+        isActive: input.isActive ?? true,
+        variants: input.variants && input.variants.length > 0 ? {
+          create: input.variants.map((v) => ({
+            name: v.name,
+            sku: v.sku.toUpperCase(),
+            priceAdjustment: v.priceAdjustment || 0,
+            attributes: v.attributes || {},
+          })),
+        } : undefined,
       },
       include: {
         variants: true,
@@ -95,85 +108,56 @@ export class ProductsService {
     });
   }
 
-  public static async update(
-    id: string,
-    data: {
-      name?: string;
-      description?: string;
-      sku?: string;
-      brand?: string;
-      category?: string;
-      isActive?: boolean;
-    }
-  ) {
-    await this.getById(id);
-
+  async updateProduct(id: string, input: UpdateProductInput) {
     return prisma.product.update({
       where: { id },
-      data,
+      data: {
+        ...input,
+        ...(input.code && { code: input.code.toUpperCase() }),
+      },
       include: {
         variants: true,
+        plans: true,
       },
     });
   }
 
-  public static async delete(id: string) {
-    await this.getById(id);
-
+  async deleteProduct(id: string) {
     return prisma.product.delete({
       where: { id },
     });
   }
 
-  public static async addVariant(
-    productId: string,
-    data: {
-      name: string;
-      sku: string;
-      attributes?: any;
-      extraCost?: number;
-    }
-  ) {
-    await this.getById(productId);
-
+  // Variant operations
+  async addVariant(input: CreateVariantInput) {
     return prisma.productVariant.create({
       data: {
-        productId,
-        name: data.name,
-        sku: data.sku,
-        attributes: data.attributes,
-        extraCost: data.extraCost || 0,
+        productId: input.productId,
+        name: input.name,
+        sku: input.sku.toUpperCase(),
+        priceAdjustment: input.priceAdjustment || 0,
+        attributes: input.attributes || {},
       },
     });
   }
 
-  public static async updateVariant(
-    variantId: string,
-    data: {
-      name?: string;
-      sku?: string;
-      attributes?: any;
-      extraCost?: number;
-      isActive?: boolean;
-    }
-  ) {
-    const variant = await prisma.productVariant.findUnique({
-      where: { id: variantId },
-    });
-
-    if (!variant) {
-      throw new NotFoundError('Product variant not found');
-    }
-
+  async updateVariant(variantId: string, data: Partial<CreateVariantInput>) {
     return prisma.productVariant.update({
       where: { id: variantId },
-      data,
+      data: {
+        ...(data.name && { name: data.name }),
+        ...(data.sku && { sku: data.sku.toUpperCase() }),
+        ...(data.priceAdjustment !== undefined && { priceAdjustment: data.priceAdjustment }),
+        ...(data.attributes && { attributes: data.attributes }),
+      },
     });
   }
 
-  public static async deleteVariant(variantId: string) {
+  async deleteVariant(variantId: string) {
     return prisma.productVariant.delete({
       where: { id: variantId },
     });
   }
 }
+
+export const productsService = new ProductsService();

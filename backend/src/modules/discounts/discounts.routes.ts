@@ -1,20 +1,33 @@
 import { Router } from 'express';
-import { DiscountsController } from './discounts.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
-import { authorize } from '../../middlewares/rbac.middleware';
+import { discountsController } from './discounts.controller';
+import { authenticate, requireStaffOrAdmin, requireAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
-router.use(authenticate);
+// Validate discount code (Available for customers and staff)
+router.post('/validate', authenticate, (req, res, next) => {
+  discountsController.validateCode(req, res, next);
+});
 
-// Customers & Staff can validate discount codes for a quotation / cart
-router.post('/validate', DiscountsController.validate);
+// Admin/Staff Discount Management
+router.get('/', authenticate, requireStaffOrAdmin, (req, res, next) => {
+  discountsController.getAll(req, res, next);
+});
 
-// Admin-only management endpoints
-router.get('/', authorize('ADMIN', 'STAFF'), DiscountsController.getAll);
-router.get('/:id', authorize('ADMIN', 'STAFF'), DiscountsController.getById);
-router.post('/', authorize('ADMIN'), DiscountsController.create);
-router.put('/:id', authorize('ADMIN'), DiscountsController.update);
-router.delete('/:id', authorize('ADMIN'), DiscountsController.delete);
+router.get('/:id', authenticate, requireStaffOrAdmin, (req, res, next) => {
+  discountsController.getById(req, res, next);
+});
+
+router.post('/', authenticate, requireAdmin, (req, res, next) => {
+  discountsController.create(req, res, next);
+});
+
+router.put('/:id', authenticate, requireAdmin, (req, res, next) => {
+  discountsController.update(req, res, next);
+});
+
+router.delete('/:id', authenticate, requireAdmin, (req, res, next) => {
+  discountsController.delete(req, res, next);
+});
 
 export default router;

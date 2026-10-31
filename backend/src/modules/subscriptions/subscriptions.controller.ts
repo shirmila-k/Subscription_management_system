@@ -1,127 +1,124 @@
 import { Request, Response, NextFunction } from 'express';
-import { SubscriptionsService } from './subscriptions.service';
-import { sendSuccess } from '../../utils/response';
-import { BadRequestError } from '../../utils/errors';
-import { SubscriptionStatus } from '@prisma/client';
+import { subscriptionsService } from './subscriptions.service';
+import { sendSuccess, sendError } from '../../utils/response';
+import { SubscriptionStatus, UserRole } from '@prisma/client';
 
 export class SubscriptionsController {
-  public static async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { status, planId, customerId } = req.query;
+      const { status, customerId, search } = req.query;
 
-      // Customer can only view their own subscriptions
-      const effectiveCustomerId =
-        req.user?.role === 'CUSTOMER' ? req.user.userId : (customerId as string);
-
-      const subscriptions = await SubscriptionsService.getAll({
-        customerId: effectiveCustomerId,
-        status: status as SubscriptionStatus,
-        planId: planId as string,
-      });
-
-      return sendSuccess(res, subscriptions);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async getById(req: Request, res: Response, next: NextFunction) {
-    try {
-      const subscription = await SubscriptionsService.getById(req.params.id);
-      return sendSuccess(res, subscription);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async createQuotation(req: Request, res: Response, next: NextFunction) {
-    try {
-      const {
-        customerId,
-        planId,
-        quantity,
-        paymentTerms,
-        discountCode,
-        quotationNotes,
-        quotationExpiresInDays,
-        customItems,
-      } = req.body;
-
-      const targetCustomerId = req.user?.role === 'CUSTOMER' ? req.user.userId : customerId;
-
-      if (!targetCustomerId || !planId) {
-        throw new BadRequestError('Customer ID and Plan ID are required to create a quotation.');
+      // If customer role, restrict to their own subscriptions
+      let targetCustomerId = customerId as string | undefined;
+      if (req.user?.role === UserRole.CUSTOMER) {
+        targetCustomerId = req.user.id;
       }
 
-      const quotation = await SubscriptionsService.createQuotation({
+      const subscriptions = await subscriptionsService.getAllSubscriptions({
         customerId: targetCustomerId,
-        planId,
-        quantity: quantity ? Number(quantity) : 1,
-        paymentTerms,
-        discountCode,
-        quotationNotes,
-        quotationExpiresInDays,
-        customItems,
+        status: status as SubscriptionStatus,
+        search: search as string,
       });
 
-      return sendSuccess(res, quotation, 'Quotation created successfully', 201);
-    } catch (error) {
+      sendSuccess(res, 'Subscriptions retrieved successfully', subscriptions);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async confirmQuotation(req: Request, res: Response, next: NextFunction) {
+  async getById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const quotation = await SubscriptionsService.confirmQuotation(req.params.id);
-      return sendSuccess(res, quotation, 'Quotation confirmed successfully');
-    } catch (error) {
-      next(error);
+      const subscription = await subscriptionsService.getSubscriptionById(req.params.id);
+
+      // Access control check for customers
+      if (req.user?.role === UserRole.CUSTOMER && subscription.customerId !== req.user.id) {
+        sendError(res, 'Access denied: not your subscription', 403);
+        return;
+      }
+
+      sendSuccess(res, 'Subscription details retrieved', subscription);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
     }
   }
 
-  public static async activate(req: Request, res: Response, next: NextFunction) {
+  async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const subscription = await SubscriptionsService.activateSubscription(req.params.id);
-      return sendSuccess(res, subscription, 'Subscription activated successfully');
-    } catch (error) {
-      next(error);
+      const customerId =
+        req.user?.role === UserRole.CUSTOMER ? req.user.id : req.body.customerId;
+
+      if (!customerId) {
+        sendError(res, 'Customer ID is required', 400);
+        return;
+      }
+
+      const subscription = await subscriptionsService.createSubscription(
+        { ...req.body, customerId },
+        req.user?.id
+      );
+
+      sendSuccess(res, 'Subscription created successfully', subscription, 201);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 
-  public static async pause(req: Request, res: Response, next: NextFunction) {
+  async sendQuotation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const subscription = await SubscriptionsService.pauseSubscription(req.params.id);
-      return sendSuccess(res, subscription, 'Subscription paused successfully');
-    } catch (error) {
-      next(error);
+      const updated = await subscriptionsService.sendQuotation(req.params.id, req.user?.id);
+      sendSuccess(res, 'Quotation sent to customer successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 
-  public static async resume(req: Request, res: Response, next: NextFunction) {
+  async acceptQuotation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const subscription = await SubscriptionsService.resumeSubscription(req.params.id);
-      return sendSuccess(res, subscription, 'Subscription resumed successfully');
-    } catch (error) {
-      next(error);
+      const customerId = req.user?.role === UserRole.CUSTOMER ? req.user.id : undefined;
+      const updated = await subscriptionsService.acceptQuotation(req.params.id, customerId);
+      sendSuccess(res, 'Quotation accepted successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 
-  public static async close(req: Request, res: Response, next: NextFunction) {
+  async activate(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const updated = await subscriptionsService.activateSubscription(req.params.id, req.user?.id);
+      sendSuccess(res, 'Subscription confirmed and activated successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
+    }
+  }
+
+  async pause(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { reason } = req.body;
-      const subscription = await SubscriptionsService.closeSubscription(req.params.id, reason);
-      return sendSuccess(res, subscription, 'Subscription closed successfully');
-    } catch (error) {
-      next(error);
+      const updated = await subscriptionsService.pauseSubscription(req.params.id, reason, req.user?.id);
+      sendSuccess(res, 'Subscription paused successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 
-  public static async renew(req: Request, res: Response, next: NextFunction) {
+  async resume(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const subscription = await SubscriptionsService.renewSubscription(req.params.id);
-      return sendSuccess(res, subscription, 'Subscription renewed successfully');
-    } catch (error) {
-      next(error);
+      const updated = await subscriptionsService.resumeSubscription(req.params.id, req.user?.id);
+      sendSuccess(res, 'Subscription resumed successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
+    }
+  }
+
+  async close(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { reason } = req.body;
+      const updated = await subscriptionsService.closeSubscription(req.params.id, reason, req.user?.id);
+      sendSuccess(res, 'Subscription closed successfully', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 }
+
+export const subscriptionsController = new SubscriptionsController();

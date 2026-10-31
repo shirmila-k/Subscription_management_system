@@ -1,91 +1,65 @@
 import { Request, Response, NextFunction } from 'express';
-import { PaymentsService } from './payments.service';
-import { sendSuccess } from '../../utils/response';
-import { BadRequestError } from '../../utils/errors';
-import { PaymentMethod, PaymentStatus } from '@prisma/client';
+import { paymentsService } from './payments.service';
+import { sendSuccess, sendError } from '../../utils/response';
+import { UserRole } from '@prisma/client';
 
 export class PaymentsController {
-  public static async recordPayment(req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const {
-        invoiceId,
-        amount,
-        method,
-        transactionReference,
-        razorpayOrderId,
-        razorpaySignature,
-        notes,
-      } = req.body;
+      const { invoiceId, customerId } = req.query;
 
-      if (!invoiceId || !amount || !method) {
-        throw new BadRequestError('invoiceId, amount, and method are required.');
+      let targetCustomerId = customerId as string | undefined;
+      if (req.user?.role === UserRole.CUSTOMER) {
+        targetCustomerId = req.user.id;
       }
 
-      const customerId = req.user?.role === 'CUSTOMER' ? req.user.userId : req.body.customerId;
-
-      if (!customerId) {
-        throw new BadRequestError('Customer ID is required.');
-      }
-
-      // If razorpay, optionally verify signature
-      if (
-        method === PaymentMethod.RAZORPAY &&
-        razorpayOrderId &&
-        transactionReference &&
-        razorpaySignature
-      ) {
-        const isValid = PaymentsService.verifyRazorpaySignature(
-          razorpayOrderId,
-          transactionReference,
-          razorpaySignature
-        );
-        if (!isValid) {
-          throw new BadRequestError('Razorpay payment signature verification failed.');
-        }
-      }
-
-      const payment = await PaymentsService.recordPayment({
-        invoiceId,
-        customerId,
-        amount: Number(amount),
-        method: method as PaymentMethod,
-        transactionReference,
-        razorpayOrderId,
-        razorpaySignature,
-        notes,
-      });
-
-      return sendSuccess(res, payment, 'Payment recorded successfully', 201);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async getAll(req: Request, res: Response, next: NextFunction) {
-    try {
-      const { invoiceId, customerId, status } = req.query;
-
-      const effectiveCustomerId =
-        req.user?.role === 'CUSTOMER' ? req.user.userId : (customerId as string);
-
-      const payments = await PaymentsService.getAll({
+      const payments = await paymentsService.getAllPayments({
+        customerId: targetCustomerId,
         invoiceId: invoiceId as string,
-        customerId: effectiveCustomerId,
-        status: status as PaymentStatus,
       });
 
-      return sendSuccess(res, payments);
-    } catch (error) {
+      sendSuccess(res, 'Payments retrieved successfully', payments);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async getById(req: Request, res: Response, next: NextFunction) {
+  async getById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const payment = await PaymentsService.getById(req.params.id);
-      return sendSuccess(res, payment);
-    } catch (error) {
-      next(error);
+      const payment = await paymentsService.getPaymentById(req.params.id);
+
+      if (req.user?.role === UserRole.CUSTOMER && payment.customerId !== req.user.id) {
+        sendError(res, 'Access denied: not your payment record', 403);
+        return;
+      }
+
+      sendSuccess(res, 'Payment details retrieved', payment);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
+    }
+  }
+
+  async recordPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const payment = await paymentsService.recordPayment(req.body, req.user?.id);
+      sendSuccess(res, 'Payment recorded and invoice reconciled successfully', payment, 201);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
+    }
+  }
+
+  async processRazorpay(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Authentication required', 401);
+        return;
+      }
+      const payment = await paymentsService.processRazorpayPayment(req.body, req.user.id);
+      sendSuccess(res, 'Razorpay payment processed successfully', payment, 201);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 }
+
+export const paymentsController = new PaymentsController();

@@ -1,123 +1,79 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, Role } from '../types';
-import { ApiClient } from '../services/api';
+import { User } from '../types';
+import { api } from '../api/client';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  isAuthenticated: boolean;
-  role: Role | null;
-  login: (credentials: { email: string; password: string }) => Promise<void>;
-  register: (data: {
-    email: string;
-    password: string;
-    name: string;
-    role?: Role;
-    companyName?: string;
-  }) => Promise<void>;
+  login: (credentials: any) => Promise<User>;
+  register: (data: any) => Promise<User>;
   logout: () => void;
-  setMockSession: (role: Role) => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('brightloop_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  useEffect(() => {
-    // Initialize session from localStorage
-    const savedToken = localStorage.getItem('brightloop_token');
-    const savedUser = localStorage.getItem('brightloop_user');
-
-    if (savedToken && savedUser) {
-      try {
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
-      } catch (err) {
-        console.error('Failed to parse cached user data', err);
-        ApiClient.removeToken();
-      }
+  const refreshUser = async () => {
+    const storedToken = localStorage.getItem('brightloop_token');
+    if (!storedToken) {
+      setUser(null);
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
-  }, []);
 
-  const login = async (credentials: { email: string; password: string }) => {
-    setIsLoading(true);
     try {
-      const response = await ApiClient.post<{ user: User; token: string }>('/auth/login', credentials);
-      setUser(response.user);
-      setToken(response.token);
-      ApiClient.setToken(response.token);
-      localStorage.setItem('brightloop_user', JSON.stringify(response.user));
+      const profile = await api.getMe();
+      setUser(profile);
+    } catch (err) {
+      console.warn('Session expired or invalid:', err);
+      localStorage.removeItem('brightloop_token');
+      localStorage.removeItem('brightloop_user');
+      setUser(null);
+      setToken(null);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (data: {
-    email: string;
-    password: string;
-    name: string;
-    role?: Role;
-    companyName?: string;
-  }) => {
-    setIsLoading(true);
-    try {
-      const response = await ApiClient.post<{ user: User; token: string }>('/auth/register', data);
-      setUser(response.user);
-      setToken(response.token);
-      ApiClient.setToken(response.token);
-      localStorage.setItem('brightloop_user', JSON.stringify(response.user));
-    } finally {
-      setIsLoading(false);
-    }
+  useEffect(() => {
+    refreshUser();
+  }, []);
+
+  const login = async (credentials: any): Promise<User> => {
+    const res = await api.login(credentials);
+    const jwtToken = res.token;
+    const authUser = res.user;
+
+    localStorage.setItem('brightloop_token', jwtToken);
+    localStorage.setItem('brightloop_user', JSON.stringify(authUser));
+    setToken(jwtToken);
+    setUser(authUser);
+    return authUser;
+  };
+
+  const register = async (data: any): Promise<User> => {
+    const res = await api.register(data);
+    const jwtToken = res.token;
+    const authUser = res.user;
+
+    localStorage.setItem('brightloop_token', jwtToken);
+    localStorage.setItem('brightloop_user', JSON.stringify(authUser));
+    setToken(jwtToken);
+    setUser(authUser);
+    return authUser;
   };
 
   const logout = () => {
-    setUser(null);
+    localStorage.removeItem('brightloop_token');
+    localStorage.removeItem('brightloop_user');
     setToken(null);
-    ApiClient.removeToken();
-  };
-
-  /**
-   * Helper to switch mock preview session instantly for Admin / Customer / Staff
-   */
-  const setMockSession = (targetRole: Role) => {
-    const mockUsers: Record<Role, User> = {
-      ADMIN: {
-        id: 'mock-admin-01',
-        email: 'admin@brightloop.com',
-        name: 'Alex Administrator',
-        role: 'ADMIN',
-        companyName: 'Brightloop Software HQ',
-        createdAt: new Date().toISOString(),
-      },
-      STAFF: {
-        id: 'mock-staff-01',
-        email: 'staff@brightloop.com',
-        name: 'Sarah Operations',
-        role: 'STAFF',
-        companyName: 'Brightloop Billing Team',
-        createdAt: new Date().toISOString(),
-      },
-      CUSTOMER: {
-        id: 'mock-customer-01',
-        email: 'customer@acmecorp.com',
-        name: 'David Acme',
-        role: 'CUSTOMER',
-        companyName: 'Acme Global Enterprises',
-        createdAt: new Date().toISOString(),
-      },
-    };
-
-    const selectedUser = mockUsers[targetRole];
-    setUser(selectedUser);
-    setToken(`mock-token-${targetRole.toLowerCase()}`);
-    localStorage.setItem('brightloop_user', JSON.stringify(selectedUser));
-    localStorage.setItem('brightloop_token', `mock-token-${targetRole.toLowerCase()}`);
+    setUser(null);
   };
 
   return (
@@ -126,12 +82,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         isLoading,
-        isAuthenticated: !!user,
-        role: user?.role || null,
         login,
         register,
         logout,
-        setMockSession,
+        refreshUser,
       }}
     >
       {children}

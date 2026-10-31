@@ -1,25 +1,50 @@
 import { Router } from 'express';
-import { SubscriptionsController } from './subscriptions.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
-import { authorize } from '../../middlewares/rbac.middleware';
+import { subscriptionsController } from './subscriptions.controller';
+import { authenticate, requireStaffOrAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
+// All subscription operations require authentication
 router.use(authenticate);
 
-// Listing & fetching
-router.get('/', SubscriptionsController.getAll);
-router.get('/:id', SubscriptionsController.getById);
+// List subscriptions (Customers get theirs, Admin/Staff get all)
+router.get('/', (req, res, next) => {
+  subscriptionsController.getAll(req, res, next);
+});
 
-// Quotation flow
-router.post('/quotations', SubscriptionsController.createQuotation);
-router.patch('/:id/confirm', SubscriptionsController.confirmQuotation);
+router.get('/:id', (req, res, next) => {
+  subscriptionsController.getById(req, res, next);
+});
 
-// Lifecycle state transitions
-router.patch('/:id/activate', authorize('ADMIN', 'STAFF'), SubscriptionsController.activate);
-router.patch('/:id/pause', authorize('ADMIN', 'STAFF', 'CUSTOMER'), SubscriptionsController.pause);
-router.patch('/:id/resume', authorize('ADMIN', 'STAFF', 'CUSTOMER'), SubscriptionsController.resume);
-router.patch('/:id/close', authorize('ADMIN', 'STAFF', 'CUSTOMER'), SubscriptionsController.close);
-router.patch('/:id/renew', authorize('ADMIN', 'STAFF'), SubscriptionsController.renew);
+// Create new quotation/draft (Staff or self-serve Customer)
+router.post('/', (req, res, next) => {
+  subscriptionsController.create(req, res, next);
+});
+
+// Quotation actions
+router.post('/:id/send-quote', requireStaffOrAdmin, (req, res, next) => {
+  subscriptionsController.sendQuotation(req, res, next);
+});
+
+router.post('/:id/accept-quote', (req, res, next) => {
+  subscriptionsController.acceptQuotation(req, res, next);
+});
+
+// Lifecycle actions
+router.post('/:id/activate', requireStaffOrAdmin, (req, res, next) => {
+  subscriptionsController.activate(req, res, next);
+});
+
+router.post('/:id/pause', (req, res, next) => {
+  subscriptionsController.pause(req, res, next);
+});
+
+router.post('/:id/resume', (req, res, next) => {
+  subscriptionsController.resume(req, res, next);
+});
+
+router.post('/:id/close', (req, res, next) => {
+  subscriptionsController.close(req, res, next);
+});
 
 export default router;

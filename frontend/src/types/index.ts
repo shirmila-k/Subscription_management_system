@@ -1,4 +1,18 @@
-export type Role = 'ADMIN' | 'STAFF' | 'CUSTOMER';
+export type UserRole = 'ADMIN' | 'STAFF' | 'CUSTOMER';
+
+export interface User {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  companyName?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  taxId?: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
 
 export type BillingFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
@@ -8,86 +22,87 @@ export type SubscriptionStatus =
   | 'CONFIRMED'
   | 'ACTIVE'
   | 'PAUSED'
-  | 'CLOSED';
+  | 'CLOSED'
+  | 'CANCELLED';
 
-export type InvoiceStatus =
-  | 'DRAFT'
-  | 'CONFIGURED'
-  | 'CONFIRMED'
-  | 'PAID'
-  | 'OVERDUE'
-  | 'VOID';
+export type PaymentTerms = 'IMMEDIATE' | 'NET_15' | 'NET_30' | 'NET_60';
+
+export type InvoiceStatus = 'DRAFT' | 'CONFIRMED' | 'PAID' | 'OVERDUE' | 'VOID';
+
+export type DiscountType = 'PERCENTAGE' | 'FIXED';
 
 export type PaymentMethod =
-  | 'RAZORPAY'
-  | 'STRIPE'
   | 'CREDIT_CARD'
   | 'BANK_TRANSFER'
+  | 'UPI'
+  | 'RAZORPAY'
+  | 'STRIPE'
   | 'CASH';
-
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: Role;
-  companyName?: string;
-  phone?: string;
-  address?: string;
-  createdAt: string;
-}
 
 export interface ProductVariant {
   id: string;
   productId: string;
   name: string;
   sku: string;
+  priceAdjustment: number;
   attributes?: Record<string, any>;
-  extraCost: number;
   isActive: boolean;
 }
 
 export interface Product {
   id: string;
   name: string;
-  description?: string;
-  sku: string;
-  brand?: string;
-  category?: string;
+  code: string;
+  description?: string | null;
+  category?: string | null;
+  brand?: string | null;
   isActive: boolean;
   variants?: ProductVariant[];
   plans?: Plan[];
+  createdAt: string;
 }
 
 export interface Plan {
   id: string;
   productId: string;
-  variantId?: string;
+  variantId?: string | null;
   name: string;
-  description?: string;
+  code: string;
+  description?: string | null;
   billingFrequency: BillingFrequency;
-  cost: number;
+  billingCycleDays: number;
+  price: number;
   currency: string;
-  minimumQuantity: number;
-  validFrom?: string;
-  validUntil?: string;
-  autoClose: boolean;
+  minQuantity: number;
+  availableFrom?: string | null;
+  availableTo?: string | null;
+  autoCloseOnExpiry: boolean;
+  canPause: boolean;
   autoRenew: boolean;
-  pauseAllowed: boolean;
-  trialPeriodDays: number;
-  gracePeriodDays: number;
+  trialDays: number;
   isActive: boolean;
   product?: Product;
   variant?: ProductVariant;
 }
 
-export interface SubscriptionItem {
+export interface Discount {
   id: string;
-  subscriptionId: string;
-  variantId?: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  subtotal: number;
+  code: string;
+  description?: string | null;
+  type: DiscountType;
+  value: number;
+  minQuantity: number;
+  minPurchaseAmount?: number | null;
+  maxDiscountAmount?: number | null;
+  startDate: string;
+  endDate?: string | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  usageLimit?: number | null;
+  maxUsage?: number | null;
+  timesUsed: number;
+  usedCount?: number;
+  isActive: boolean;
 }
 
 export interface Subscription {
@@ -98,53 +113,71 @@ export interface Subscription {
   status: SubscriptionStatus;
   quantity: number;
   unitPrice: number;
+  discountId?: string | null;
   discountAmount: number;
+  taxRate: number;
+  taxAmount: number;
+  subtotal: number;
   totalAmount: number;
-  paymentTerms: string;
-  startDate?: string;
-  expiryDate?: string;
-  nextBillingDate?: string;
-  lastBilledDate?: string;
-  cancellationReason?: string;
-  quotationNotes?: string;
-  quotationExpiresAt?: string;
+  paymentTerms: PaymentTerms;
+  startDate: string;
+  nextBillingDate?: string | null;
+  expiryDate?: string | null;
+  autoRenew: boolean;
+  quotationSentAt?: string | null;
+  quotationAcceptedAt?: string | null;
+  confirmedAt?: string | null;
+  activatedAt?: string | null;
+  pausedAt?: string | null;
+  closedAt?: string | null;
+  cancellationReason?: string | null;
+  notes?: string | null;
   createdAt: string;
   customer?: User;
   plan?: Plan;
-  discount?: Discount;
-  items?: SubscriptionItem[];
+  product?: Product;
+  discount?: Discount | null;
   invoices?: Invoice[];
-}
-
-export interface InvoiceItem {
-  id: string;
-  invoiceId: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  taxRate: number;
-  amount: number;
+  lifecycleLogs?: {
+    id: string;
+    fromStatus: SubscriptionStatus;
+    toStatus: SubscriptionStatus;
+    action: string;
+    notes?: string | null;
+    createdAt: string;
+  }[];
 }
 
 export interface Invoice {
   id: string;
   invoiceNumber: string;
-  subscriptionId?: string;
+  subscriptionId: string;
   customerId: string;
   status: InvoiceStatus;
+  issueDate: string;
+  dueDate: string;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
   subtotal: number;
   taxRate: number;
   taxAmount: number;
   discountAmount: number;
   totalAmount: number;
-  currency: string;
-  issueDate: string;
-  dueDate: string;
-  paidAt?: string;
+  amountPaid: number;
+  balanceDue: number;
+  notes?: string | null;
   customer?: User;
-  subscription?: Subscription;
-  items?: InvoiceItem[];
-  payments?: Payment[];
+  items?: {
+    id: string;
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+  }[];
+  subscription?: {
+    subscriptionNumber: string;
+    status: SubscriptionStatus;
+  };
 }
 
 export interface Payment {
@@ -154,42 +187,52 @@ export interface Payment {
   customerId: string;
   amount: number;
   currency: string;
-  method: PaymentMethod;
-  status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'REFUNDED';
-  transactionReference?: string;
+  paymentMethod: PaymentMethod;
+  status: string;
   paymentDate: string;
-  notes?: string;
+  transactionReference?: string | null;
+  transactionRef?: string | null;
+  notes?: string | null;
+  customer?: {
+    firstName: string;
+    lastName: string;
+    email: string;
+  };
+  invoice?: {
+    invoiceNumber: string;
+    totalAmount: number;
+    status: InvoiceStatus;
+  };
 }
 
-export interface Discount {
-  id: string;
-  code: string;
-  type: 'FIXED' | 'PERCENTAGE';
-  value: number;
-  minQuantity: number;
-  minPurchaseAmount: number;
-  startDate: string;
-  endDate: string;
-  maxUses?: number;
-  usedCount: number;
-  isActive: boolean;
-}
-
-export interface AnalyticsSummary {
-  metrics: {
+export interface AnalyticsOverview {
+  executionTimeMs: number;
+  mrr?: number;
+  arr?: number;
+  activeSubscriptions?: number;
+  totalRevenue?: number;
+  totalSubscriptions?: number;
+  kpis: {
+    totalSubscriptions: number;
     activeSubscriptions: number;
-    totalCustomers: number;
+    quotationsPending: number;
+    draftSubscriptions: number;
+    pausedSubscriptions: number;
+    closedSubscriptions: number;
     mrr: number;
     arr: number;
-    totalRevenueCollected: number;
+    totalCollectedRevenue: number;
     totalPaymentsCount: number;
     overdueInvoicesCount: number;
     overdueInvoicesAmount: number;
+    outstandingBalanceTotal: number;
   };
   statusDistribution: Record<string, number>;
-  recentSubscriptions: Subscription[];
-  performance: {
-    executionTimeMs: number;
-    targetUnderMs: number;
-  };
+  topPlans: {
+    planId: string;
+    planName: string;
+    price: number;
+    subscribersCount: number;
+  }[];
+  recentActivity: any[];
 }

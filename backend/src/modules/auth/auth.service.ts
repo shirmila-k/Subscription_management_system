@@ -1,182 +1,216 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import prisma from '../../config/prisma';
+import prisma from '../../config/db';
 import { env } from '../../config/env';
-import { BadRequestError, UnauthorizedError, NotFoundError } from '../../utils/errors';
-import { Role } from '@prisma/client';
+import { RegisterInput, LoginInput, ResetPasswordInput } from './auth.types';
+import { AuthUserPayload } from '../../types/express';
+import { UserRole } from '@prisma/client';
 
 export class AuthService {
-  /**
-   * Validate password strength: min 8 characters, at least 1 uppercase, 1 lowercase, 1 number, 1 special char
-   */
-  public static validatePassword(password: string): void {
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-    if (!passwordRegex.test(password)) {
-      throw new BadRequestError(
-        'Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, a number, and a special character.'
-      );
-    }
-  }
+  private static readonly SALT_ROUNDS = 12;
 
-  public static async register(data: {
-    email: string;
-    password: string;
-    name: string;
-    role?: Role;
-    companyName?: string;
-    phone?: string;
-  }) {
+  /**
+   * Register a new user with strict password hashing and duplicate email prevention
+   */
+  async register(input: RegisterInput) {
     const existing = await prisma.user.findUnique({
-      where: { email: data.email.toLowerCase() },
+      where: { email: input.email.toLowerCase() },
     });
 
     if (existing) {
-      throw new BadRequestError('An account with this email address already exists.');
+      throw new Error('An account with this email address already exists.');
     }
 
-    this.validatePassword(data.password);
-
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(data.password, salt);
+    const passwordHash = await bcrypt.hash(input.password, AuthService.SALT_ROUNDS);
 
     const user = await prisma.user.create({
       data: {
-        email: data.email.toLowerCase(),
+        email: input.email.toLowerCase(),
         passwordHash,
-        name: data.name,
-        role: data.role || Role.CUSTOMER,
-        companyName: data.companyName,
-        phone: data.phone,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        companyName: input.companyName,
+        phone: input.phone,
+        address: input.address,
+        taxId: input.taxId,
+        role: input.role || UserRole.CUSTOMER,
       },
       select: {
         id: true,
         email: true,
-        name: true,
         role: true,
+        firstName: true,
+        lastName: true,
         companyName: true,
+        phone: true,
+        isActive: true,
         createdAt: true,
       },
     });
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      env.JWT_SECRET,
-      { expiresIn: env.JWT_EXPIRES_IN }
-    );
+    const token = this.generateToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    });
 
     return { user, token };
   }
 
-  public static async login(credentials: { email: string; password: string }) {
+  /**
+   * Authenticate user with password comparison and generate JWT
+   */
+  async login(input: LoginInput) {
     const user = await prisma.user.findUnique({
-      where: { email: credentials.email.toLowerCase() },
+      where: { email: input.email.toLowerCase() },
     });
 
-    if (!user || !user.isActive) {
-      throw new UnauthorizedError('Invalid credentials or account is deactivated.');
+    if (!user) {
+      throw new Error('Invalid email or password credentials.');
     }
 
-    const isMatch = await bcrypt.compare(credentials.password, user.passwordHash);
-    if (!isMatch) {
-      throw new UnauthorizedError('Invalid credentials.');
+    if (!user.isActive) {
+      throw new Error('This user account has been deactivated. Please contact support.');
     }
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      env.JWT_SECRET,
-      { expiresIn: env.JWT_EXPIRES_IN }
-    );
+    const isValidPassword = await bcrypt.compare(input.password, user.passwordHash);
+    if (!isValidPassword) {
+      throw new Error('Invalid email or password credentials.');
+    }
+
+    // Update last login
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    const token = this.generateToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    });
 
     return {
       user: {
         id: user.id,
         email: user.email,
-        name: user.name,
         role: user.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
         companyName: user.companyName,
+        phone: user.phone,
+        address: user.address,
+        taxId: user.taxId,
+        createdAt: user.createdAt,
       },
       token,
     };
   }
 
-  public static async forgotPassword(email: string) {
+  /**
+   * Fetch user profile by ID
+   */
+  async getProfile(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        firstName: true,
+        lastName: true,
+        companyName: true,
+        phone: true,
+        address: true,
+        taxId: true,
+        isActive: true,
+        createdAt: true,
+        lastLoginAt: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error('User profile not found.');
+    }
+
+    return user;
+  }
+
+  /**
+   * Generate password reset token with 1-hour expiration
+   */
+  async generatePasswordResetToken(email: string) {
     const user = await prisma.user.findUnique({
       where: { email: email.toLowerCase() },
     });
 
     if (!user) {
-      // Don't leak existence of user
-      return { message: 'If that email exists, a reset link has been dispatched.' };
+      // Don't leak whether an email exists for security
+      return { message: 'If this email is registered, a password reset link has been issued.' };
     }
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour validity
+    const resetExpiry = new Date(Date.now() + 3600 * 1000); // 1 hour
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        resetToken,
-        resetTokenExpiry,
+        resetPasswordToken: resetToken,
+        resetPasswordExpiry: resetExpiry,
       },
     });
 
+    // In a production app, trigger email sending here. For dev/demo, return token or confirmation.
     return {
-      message: 'Reset instructions generated successfully.',
-      resetToken, // In production this is emailed; exposed for testing convenience
+      message: 'Password reset token generated successfully.',
+      resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined,
     };
   }
 
-  public static async resetPassword(token: string, newPassword: string) {
-    this.validatePassword(newPassword);
-
+  /**
+   * Reset password via secure token verification
+   */
+  async resetPassword(input: ResetPasswordInput) {
     const user = await prisma.user.findFirst({
       where: {
-        resetToken: token,
-        resetTokenExpiry: {
+        resetPasswordToken: input.token,
+        resetPasswordExpiry: {
           gt: new Date(),
         },
       },
     });
 
     if (!user) {
-      throw new BadRequestError('Password reset token is invalid or has expired.');
+      throw new Error('Invalid or expired password reset token.');
     }
 
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(newPassword, salt);
+    const newPasswordHash = await bcrypt.hash(input.newPassword, AuthService.SALT_ROUNDS);
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        passwordHash,
-        resetToken: null,
-        resetTokenExpiry: null,
+        passwordHash: newPasswordHash,
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
       },
     });
 
-    return { message: 'Password has been successfully reset. You may now login.' };
+    return { message: 'Password has been successfully reset. Please log in with your new credentials.' };
   }
 
-  public static async getProfile(userId: string) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        companyName: true,
-        phone: true,
-        address: true,
-        createdAt: true,
-      },
+  /**
+   * Helper to sign JWT payload
+   */
+  private generateToken(payload: AuthUserPayload): string {
+    return jwt.sign(payload, env.jwtSecret, {
+      expiresIn: env.jwtExpiresIn as any,
     });
-
-    if (!user) {
-      throw new NotFoundError('User profile not found.');
-    }
-
-    return user;
   }
 }
+
+export const authService = new AuthService();

@@ -1,13 +1,24 @@
-import prisma from '../../config/prisma';
-import { NotFoundError, BadRequestError } from '../../utils/errors';
+import prisma from '../../config/db';
 import { DiscountType } from '@prisma/client';
 
+export interface CreateDiscountInput {
+  code: string;
+  description?: string;
+  type: DiscountType;
+  value: number;
+  minQuantity?: number;
+  minPurchaseAmount?: number;
+  maxDiscountAmount?: number;
+  startDate?: Date;
+  endDate?: Date;
+  usageLimit?: number;
+  isActive?: boolean;
+}
+
 export class DiscountsService {
-  public static async getAll(filter?: { isActive?: boolean }) {
+  async getAllDiscounts(params?: { isActive?: boolean }) {
     const where: any = {};
-    if (filter?.isActive !== undefined) {
-      where.isActive = filter.isActive;
-    }
+    if (params?.isActive !== undefined) where.isActive = params.isActive;
 
     return prisma.discount.findMany({
       where,
@@ -15,124 +26,113 @@ export class DiscountsService {
     });
   }
 
-  public static async getById(id: string) {
-    const discount = await prisma.discount.findUnique({
-      where: { id },
-    });
-
-    if (!discount) {
-      throw new NotFoundError(`Discount rule with ID ${id} not found.`);
-    }
-
+  async getDiscountById(id: string) {
+    const discount = await prisma.discount.findUnique({ where: { id } });
+    if (!discount) throw new Error('Discount rule not found');
     return discount;
   }
 
-  public static async validateCode(code: string, quantity = 1, amount = 0) {
-    const discount = await prisma.discount.findUnique({
-      where: { code: code.toUpperCase() },
-    });
-
-    if (!discount) {
-      throw new NotFoundError('Invalid discount promo code.');
-    }
-
-    if (!discount.isActive) {
-      throw new BadRequestError('This discount coupon is inactive.');
-    }
-
-    const now = new Date();
-    if (now < discount.startDate || now > discount.endDate) {
-      throw new BadRequestError('This discount coupon is not valid at this time.');
-    }
-
-    if (discount.maxUses && discount.usedCount >= discount.maxUses) {
-      throw new BadRequestError('This discount coupon usage limit has been reached.');
-    }
-
-    if (quantity < discount.minQuantity) {
-      throw new BadRequestError(
-        `This discount requires a minimum subscription quantity of ${discount.minQuantity}.`
-      );
-    }
-
-    if (amount < Number(discount.minPurchaseAmount)) {
-      throw new BadRequestError(
-        `This discount requires a minimum order amount of ${discount.minPurchaseAmount}.`
-      );
-    }
-
-    let calculatedDiscount = 0;
-    if (discount.type === DiscountType.PERCENTAGE) {
-      calculatedDiscount = (amount * Number(discount.value)) / 100;
-    } else {
-      calculatedDiscount = Number(discount.value);
-    }
-
-    return {
-      valid: true,
-      discount,
-      calculatedDiscount: Math.min(calculatedDiscount, amount),
-    };
-  }
-
-  public static async create(data: {
-    code: string;
-    type: DiscountType;
-    value: number;
-    minQuantity?: number;
-    minPurchaseAmount?: number;
-    startDate: Date;
-    endDate: Date;
-    maxUses?: number;
-  }) {
-    const existing = await prisma.discount.findUnique({
-      where: { code: data.code.toUpperCase() },
-    });
-
-    if (existing) {
-      throw new BadRequestError('A discount rule with this code already exists.');
-    }
-
+  async createDiscount(input: CreateDiscountInput) {
     return prisma.discount.create({
       data: {
-        code: data.code.toUpperCase(),
-        type: data.type,
-        value: data.value,
-        minQuantity: data.minQuantity ?? 1,
-        minPurchaseAmount: data.minPurchaseAmount ?? 0,
-        startDate: data.startDate,
-        endDate: data.endDate,
-        maxUses: data.maxUses,
+        code: input.code.toUpperCase().trim(),
+        description: input.description,
+        type: input.type,
+        value: input.value,
+        minQuantity: input.minQuantity ?? 1,
+        minPurchaseAmount: input.minPurchaseAmount ?? null,
+        maxDiscountAmount: input.maxDiscountAmount ?? null,
+        startDate: input.startDate ? new Date(input.startDate) : new Date(),
+        endDate: input.endDate ? new Date(input.endDate) : null,
+        usageLimit: input.usageLimit ?? null,
+        isActive: input.isActive ?? true,
       },
     });
   }
 
-  public static async update(
-    id: string,
-    data: {
-      type?: DiscountType;
-      value?: number;
-      minQuantity?: number;
-      minPurchaseAmount?: number;
-      startDate?: Date;
-      endDate?: Date;
-      maxUses?: number;
-      isActive?: boolean;
-    }
-  ) {
-    await this.getById(id);
-
+  async updateDiscount(id: string, input: Partial<CreateDiscountInput>) {
     return prisma.discount.update({
       where: { id },
-      data,
+      data: {
+        ...input,
+        ...(input.code && { code: input.code.toUpperCase().trim() }),
+      },
     });
   }
 
-  public static async delete(id: string) {
-    await this.getById(id);
+  async deleteDiscount(id: string) {
+    return prisma.discount.delete({ where: { id } });
+  }
 
-    return prisma.discount.delete({
-      where: { id },
+  /**
+   * Validate and compute discount value based on quantity and subtotal
+   */
+  async validateAndApplyDiscount(code: string, quantity: number, subtotal: number) {
+    const discount = await prisma.discount.findUnique({
+      where: { code: code.toUpperCase().trim() },
+    });
+
+    if (!discount) {
+      throw new Error(`Discount coupon '${code}' is invalid.`);
+    }
+
+    if (!discount.isActive) {
+      throw new Error(`Discount coupon '${code}' is inactive.`);
+    }
+
+    const now = new Date();
+    if (discount.startDate > now) {
+      throw new Error(`Discount coupon '${code}' is not yet active.`);
+    }
+
+    if (discount.endDate && discount.endDate < now) {
+      throw new Error(`Discount coupon '${code}' has expired.`);
+    }
+
+    if (discount.usageLimit && discount.timesUsed >= discount.usageLimit) {
+      throw new Error(`Discount coupon '${code}' has reached its usage limit.`);
+    }
+
+    if (quantity < discount.minQuantity) {
+      throw new Error(
+        `Discount coupon '${code}' requires a minimum quantity of ${discount.minQuantity}.`
+      );
+    }
+
+    if (discount.minPurchaseAmount && subtotal < Number(discount.minPurchaseAmount)) {
+      throw new Error(
+        `Discount coupon '${code}' requires a minimum subtotal of $${discount.minPurchaseAmount}.`
+      );
+    }
+
+    let calculatedDiscount = 0;
+    const discountValue = Number(discount.value);
+
+    if (discount.type === DiscountType.PERCENTAGE) {
+      calculatedDiscount = (subtotal * discountValue) / 100;
+      if (discount.maxDiscountAmount && calculatedDiscount > Number(discount.maxDiscountAmount)) {
+        calculatedDiscount = Number(discount.maxDiscountAmount);
+      }
+    } else {
+      // FIXED discount
+      calculatedDiscount = Math.min(discountValue, subtotal);
+    }
+
+    return {
+      discount,
+      discountAmount: Math.round(calculatedDiscount * 100) / 100,
+    };
+  }
+
+  /**
+   * Increment timesUsed counter when an order/subscription is locked
+   */
+  async incrementUsage(discountId: string) {
+    return prisma.discount.update({
+      where: { id: discountId },
+      data: { timesUsed: { increment: 1 } },
     });
   }
 }
+
+export const discountsService = new DiscountsService();

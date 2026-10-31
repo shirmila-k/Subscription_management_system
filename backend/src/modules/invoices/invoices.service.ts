@@ -1,213 +1,221 @@
-import prisma from '../../config/prisma';
-import { NotFoundError, BadRequestError } from '../../utils/errors';
-import { InvoiceStatus } from '@prisma/client';
-import { generateInvoicePdf } from '../../utils/pdfGenerator';
+import prisma from '../../config/db';
+import { InvoiceStatus, PaymentTerms } from '@prisma/client';
+import { pdfService } from './pdf.service';
 
 export class InvoicesService {
-  public static async generateInvoiceNumber(): Promise<string> {
-    const count = await prisma.invoice.count();
+  /**
+   * Helper to generate unique invoice numbers
+   */
+  private async generateInvoiceNumber(): Promise<string> {
     const year = new Date().getFullYear();
-    const sequence = (count + 1).toString().padStart(4, '0');
+    const count = await prisma.invoice.count();
+    const sequence = (count + 1).toString().padStart(5, '0');
     return `INV-${year}-${sequence}`;
   }
 
   /**
-   * Automated billing generation from active subscription
+   * Helper to calculate invoice due date based on payment terms
    */
-  public static async generateInvoiceForSubscription(
-    subscriptionId: string,
-    billingPeriodStart: Date,
-    billingPeriodEnd: Date
-  ) {
+  private computeDueDate(issueDate: Date, terms: PaymentTerms): Date {
+    const due = new Date(issueDate);
+    switch (terms) {
+      case PaymentTerms.IMMEDIATE:
+        return due;
+      case PaymentTerms.NET_15:
+        due.setDate(due.getDate() + 15);
+        return due;
+      case PaymentTerms.NET_30:
+        due.setDate(due.getDate() + 30);
+        return due;
+      case PaymentTerms.NET_60:
+        due.setDate(due.getDate() + 60);
+        return due;
+      default:
+        due.setDate(due.getDate() + 30);
+        return due;
+    }
+  }
+
+  /**
+   * Automatically generate an invoice from an active or confirmed subscription
+   */
+  async generateInvoiceForSubscription(subscriptionId: string) {
     const sub = await prisma.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
-        plan: { include: { product: true } },
-        items: true,
         customer: true,
+        plan: {
+          include: { product: true, variant: true },
+        },
       },
     });
 
-    if (!sub) {
-      throw new NotFoundError('Subscription not found.');
-    }
+    if (!sub) throw new Error('Subscription not found');
+
+    const issueDate = new Date();
+    const dueDate = this.computeDueDate(issueDate, sub.paymentTerms);
+
+    const billingPeriodStart = sub.nextBillingDate ? new Date(sub.nextBillingDate) : new Date(sub.startDate);
+    const billingPeriodEnd = new Date(billingPeriodStart);
+    billingPeriodEnd.setDate(billingPeriodEnd.getDate() + sub.plan.billingCycleDays);
 
     const invoiceNumber = await this.generateInvoiceNumber();
-    const taxRate = 0.18; // 18% standard VAT/GST
+    const variantDesc = sub.plan.variant ? ` (${sub.plan.variant.name})` : '';
+    const itemDescription = `${sub.plan.product.name}${variantDesc} - ${sub.plan.name} Plan [Billing cycle: ${sub.plan.billingCycleDays} days]`;
 
-    let subtotal = 0;
-    const itemsData = sub.items.length
-      ? sub.items.map((item) => {
-          const itemAmount = Number(item.subtotal);
-          subtotal += itemAmount;
-          return {
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            taxRate,
-            amount: itemAmount,
-          };
-        })
-      : [
-          {
-            description: `${sub.plan.product.name} - ${sub.plan.name} (${sub.plan.billingFrequency} Billing)`,
-            quantity: sub.quantity,
-            unitPrice: sub.unitPrice,
-            taxRate,
-            amount: Number(sub.unitPrice) * sub.quantity,
-          },
-        ];
+    const subtotal = Number(sub.subtotal);
+    const discountAmount = Number(sub.discountAmount);
+    const taxRate = Number(sub.taxRate);
+    const taxAmount = Number(sub.taxAmount);
+    const totalAmount = Number(sub.totalAmount);
 
-    if (!sub.items.length) {
-      subtotal = Number(sub.unitPrice) * sub.quantity;
-    }
-
-    const discountAmount = Number(sub.discountAmount) || 0;
-    const taxableAmount = Math.max(0, subtotal - discountAmount);
-    const taxAmount = taxableAmount * taxRate;
-    const totalAmount = taxableAmount + taxAmount;
-
-    // Determine due date according to payment terms
-    const dueDate = new Date(billingPeriodStart);
-    switch (sub.paymentTerms) {
-      case 'NET15':
-        dueDate.setDate(dueDate.getDate() + 15);
-        break;
-      case 'NET30':
-        dueDate.setDate(dueDate.getDate() + 30);
-        break;
-      case 'NET60':
-        dueDate.setDate(dueDate.getDate() + 60);
-        break;
-      case 'IMMEDIATE':
-      default:
-        dueDate.setDate(dueDate.getDate() + 3); // 3 days grace for immediate
-        break;
-    }
-
-    return prisma.invoice.create({
+    const invoice = await prisma.invoice.create({
       data: {
         invoiceNumber,
         subscriptionId: sub.id,
         customerId: sub.customerId,
         status: InvoiceStatus.CONFIRMED,
+        issueDate,
+        dueDate,
+        billingPeriodStart,
+        billingPeriodEnd,
         subtotal,
         taxRate,
         taxAmount,
         discountAmount,
         totalAmount,
-        currency: sub.plan.currency,
-        billingPeriodStart,
-        billingPeriodEnd,
-        dueDate,
+        amountPaid: 0,
+        balanceDue: totalAmount,
         items: {
-          create: itemsData,
+          create: [
+            {
+              description: itemDescription,
+              quantity: sub.quantity,
+              unitPrice: sub.unitPrice,
+              amount: subtotal,
+            },
+          ],
         },
       },
       include: {
-        items: true,
         customer: true,
+        items: true,
+        subscription: true,
       },
     });
+
+    return invoice;
   }
 
-  public static async getAll(filter?: {
+  /**
+   * Fetch all invoices with filters
+   */
+  async getAllInvoices(params?: {
     customerId?: string;
-    status?: InvoiceStatus;
     subscriptionId?: string;
+    status?: InvoiceStatus;
+    search?: string;
   }) {
     const where: any = {};
-
-    if (filter?.customerId) {
-      where.customerId = filter.customerId;
-    }
-
-    if (filter?.status) {
-      where.status = filter.status;
-    }
-
-    if (filter?.subscriptionId) {
-      where.subscriptionId = filter.subscriptionId;
+    if (params?.customerId) where.customerId = params.customerId;
+    if (params?.subscriptionId) where.subscriptionId = params.subscriptionId;
+    if (params?.status) where.status = params.status;
+    if (params?.search) {
+      where.OR = [
+        { invoiceNumber: { contains: params.search } },
+        { customer: { email: { contains: params.search } } },
+        { customer: { companyName: { contains: params.search } } },
+      ];
     }
 
     return prisma.invoice.findMany({
       where,
       include: {
-        customer: { select: { id: true, name: true, email: true, companyName: true } },
-        subscription: { select: { id: true, subscriptionNumber: true } },
+        customer: {
+          select: { id: true, firstName: true, lastName: true, email: true, companyName: true },
+        },
+        subscription: {
+          select: { subscriptionNumber: true, status: true },
+        },
+        items: true,
         payments: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { issueDate: 'desc' },
     });
   }
 
-  public static async getById(id: string) {
+  /**
+   * Fetch invoice by ID
+   */
+  async getInvoiceById(id: string) {
     const invoice = await prisma.invoice.findUnique({
       where: { id },
       include: {
         customer: true,
         subscription: {
-          include: {
-            plan: { include: { product: true } },
-          },
+          include: { plan: { include: { product: true } } },
         },
         items: true,
-        payments: true,
+        payments: {
+          orderBy: { paymentDate: 'desc' },
+        },
       },
     });
 
-    if (!invoice) {
-      throw new NotFoundError(`Invoice with ID ${id} not found.`);
-    }
-
+    if (!invoice) throw new Error(`Invoice with ID '${id}' not found`);
     return invoice;
   }
 
-  public static async confirmInvoice(id: string) {
-    const invoice = await this.getById(id);
-    if (invoice.status !== InvoiceStatus.DRAFT && invoice.status !== InvoiceStatus.CONFIGURED) {
-      throw new BadRequestError(`Invoice is already ${invoice.status}`);
-    }
+  /**
+   * Generate downloadable PDF buffer for an invoice
+   */
+  async getInvoicePdfBuffer(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const invoice = await this.getInvoiceById(id);
 
-    return prisma.invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.CONFIRMED },
-    });
-  }
-
-  public static async markAsPaid(id: string) {
-    return prisma.invoice.update({
-      where: { id },
-      data: {
-        status: InvoiceStatus.PAID,
-        paidAt: new Date(),
-      },
-    });
-  }
-
-  public static async getPdfBuffer(id: string): Promise<Buffer> {
-    const invoice = await this.getById(id);
-
-    return generateInvoicePdf({
+    const pdfBuffer = await pdfService.generateInvoicePdf({
       invoiceNumber: invoice.invoiceNumber,
-      customerName: invoice.customer.name,
-      customerEmail: invoice.customer.email,
-      companyName: invoice.customer.companyName || undefined,
       issueDate: invoice.issueDate,
       dueDate: invoice.dueDate,
       status: invoice.status,
+      customer: {
+        firstName: invoice.customer.firstName,
+        lastName: invoice.customer.lastName,
+        email: invoice.customer.email,
+        companyName: invoice.customer.companyName,
+        address: invoice.customer.address,
+        taxId: invoice.customer.taxId,
+      },
+      items: invoice.items.map((i) => ({
+        description: i.description,
+        quantity: i.quantity,
+        unitPrice: Number(i.unitPrice),
+        amount: Number(i.amount),
+      })),
       subtotal: Number(invoice.subtotal),
       taxRate: Number(invoice.taxRate),
       taxAmount: Number(invoice.taxAmount),
       discountAmount: Number(invoice.discountAmount),
       totalAmount: Number(invoice.totalAmount),
-      currency: invoice.currency,
-      items: invoice.items.map((item) => ({
-        description: item.description,
-        quantity: item.quantity,
-        unitPrice: Number(item.unitPrice),
-        amount: Number(item.amount),
-      })),
+      amountPaid: Number(invoice.amountPaid),
+      balanceDue: Number(invoice.balanceDue),
+      notes: invoice.notes,
+    });
+
+    return {
+      buffer: pdfBuffer,
+      filename: `${invoice.invoiceNumber}.pdf`,
+    };
+  }
+
+  /**
+   * Update invoice status
+   */
+  async updateStatus(id: string, status: InvoiceStatus) {
+    return prisma.invoice.update({
+      where: { id },
+      data: { status },
     });
   }
 }
+
+export const invoicesService = new InvoicesService();

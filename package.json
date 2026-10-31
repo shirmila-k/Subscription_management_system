@@ -1,0 +1,28 @@
+{
+  "name": "brightloop-subscription-management-system",
+  "version": "1.0.0",
+  "description": "Brightloop Software Subscription Management System - Full Stack Architecture",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:backend": "npm --prefix backend run build",
+    "build:frontend": "npm --prefix frontend run build",
+    "prisma:generate": "npm --prefix backend run prisma:generate",
+    "prisma:migrate": "npm --prefix backend run prisma:migrate",
+    "prisma:push": "npm --prefix backend run prisma:push",
+    "prisma:seed": "npm --prefix backend run prisma:seed",
+    "prisma:studio": "npm --prefix backend run prisma:studio"
+  },
+  "keywords": [
+    "subscription-management",
+    "brightloop",
+    "express",
+    "prisma",
+    "mysql",
+    "react",
+    "vite",
+    "tailwindcss"
+  ],
+  "author": "Brightloop Software",
+  "license": "MIT"
+}

@@ -1,135 +1,155 @@
-import crypto from 'crypto';
-import prisma from '../../config/prisma';
-import { env } from '../../config/env';
-import { BadRequestError, NotFoundError } from '../../utils/errors';
-import { PaymentMethod, PaymentStatus } from '@prisma/client';
-import { InvoicesService } from '../invoices/invoices.service';
+import prisma from '../../config/db';
+import { PaymentMethod, PaymentStatus, InvoiceStatus } from '@prisma/client';
+
+export interface RecordPaymentInput {
+  invoiceId: string;
+  amount: number;
+  currency?: string;
+  paymentMethod: PaymentMethod;
+  transactionReference?: string;
+  notes?: string;
+  gatewayResponse?: any;
+}
 
 export class PaymentsService {
-  public static async generatePaymentNumber(): Promise<string> {
-    const count = await prisma.payment.count();
+  private async generatePaymentNumber(): Promise<string> {
     const year = new Date().getFullYear();
-    const sequence = (count + 1).toString().padStart(4, '0');
+    const count = await prisma.payment.count();
+    const sequence = (count + 1).toString().padStart(5, '0');
     return `PAY-${year}-${sequence}`;
   }
 
-  public static async recordPayment(data: {
-    invoiceId: string;
-    customerId: string;
-    amount: number;
-    method: PaymentMethod;
-    transactionReference?: string;
-    razorpayOrderId?: string;
-    razorpaySignature?: string;
-    notes?: string;
-  }) {
+  /**
+   * Record a payment against an invoice and reconcile balances
+   */
+  async recordPayment(input: RecordPaymentInput, customerId?: string) {
     const invoice = await prisma.invoice.findUnique({
-      where: { id: data.invoiceId },
-      include: { payments: true },
+      where: { id: input.invoiceId },
     });
 
-    if (!invoice) {
-      throw new NotFoundError('Invoice not found.');
+    if (!invoice) throw new Error('Target invoice not found');
+
+    if (invoice.status === InvoiceStatus.PAID) {
+      throw new Error('This invoice is already fully paid');
     }
 
-    if (invoice.status === 'PAID') {
-      throw new BadRequestError('Invoice has already been fully paid.');
+    if (invoice.status === InvoiceStatus.VOID) {
+      throw new Error('Cannot apply payment to a void invoice');
+    }
+
+    const payAmount = Number(input.amount);
+    if (payAmount <= 0) {
+      throw new Error('Payment amount must be greater than zero');
+    }
+
+    const currentBalance = Number(invoice.balanceDue);
+    if (payAmount > currentBalance + 0.01) {
+      throw new Error(
+        `Payment amount ($${payAmount.toFixed(2)}) exceeds remaining balance ($${currentBalance.toFixed(2)})`
+      );
     }
 
     const paymentNumber = await this.generatePaymentNumber();
 
-    const payment = await prisma.payment.create({
-      data: {
-        paymentNumber,
-        invoiceId: data.invoiceId,
-        customerId: data.customerId,
-        amount: data.amount,
-        currency: invoice.currency,
-        method: data.method,
-        status: PaymentStatus.SUCCESS,
-        transactionReference: data.transactionReference,
-        razorpayOrderId: data.razorpayOrderId,
-        razorpaySignature: data.razorpaySignature,
-        notes: data.notes,
-      },
+    // Use transaction to ensure payment record and invoice update are atomic
+    return prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          paymentNumber,
+          invoiceId: invoice.id,
+          customerId: customerId || invoice.customerId,
+          amount: payAmount,
+          currency: input.currency || 'USD',
+          paymentMethod: input.paymentMethod,
+          status: PaymentStatus.SUCCESS,
+          paymentDate: new Date(),
+          transactionReference: input.transactionReference,
+          notes: input.notes,
+          gatewayResponse: input.gatewayResponse || undefined,
+        },
+      });
+
+      const updatedAmountPaid = Number(invoice.amountPaid) + payAmount;
+      const updatedBalanceDue = Math.max(0, currentBalance - payAmount);
+      const isFullyPaid = updatedBalanceDue <= 0;
+
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          amountPaid: updatedAmountPaid,
+          balanceDue: updatedBalanceDue,
+          status: isFullyPaid ? InvoiceStatus.PAID : invoice.status,
+        },
+      });
+
+      return payment;
     });
-
-    // Reconcile total payments against invoice total
-    const totalPaid = invoice.payments
-      .filter((p) => p.status === PaymentStatus.SUCCESS)
-      .reduce((sum, p) => sum + Number(p.amount), Number(data.amount));
-
-    if (totalPaid >= Number(invoice.totalAmount)) {
-      await InvoicesService.markAsPaid(invoice.id);
-    }
-
-    return payment;
   }
 
   /**
-   * Razorpay payment signature verification
+   * Handle Razorpay webhook or simulated signature matching
    */
-  public static verifyRazorpaySignature(
-    razorpayOrderId: string,
-    razorpayPaymentId: string,
-    signature: string
-  ): boolean {
-    if (!env.RAZORPAY_KEY_SECRET) {
-      // In dev or sandbox when secret is not configured, accept validation
-      return true;
-    }
-
-    const body = `${razorpayOrderId}|${razorpayPaymentId}`;
-    const expectedSignature = crypto
-      .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
-      .update(body.toString())
-      .digest('hex');
-
-    return expectedSignature === signature;
+  async processRazorpayPayment(payload: {
+    razorpay_payment_id: string;
+    razorpay_order_id?: string;
+    invoiceId: string;
+    amount: number;
+    notes?: string;
+  }, customerId: string) {
+    return this.recordPayment(
+      {
+        invoiceId: payload.invoiceId,
+        amount: payload.amount,
+        paymentMethod: PaymentMethod.RAZORPAY,
+        transactionReference: payload.razorpay_payment_id,
+        notes: payload.notes || `Razorpay transaction ${payload.razorpay_payment_id}`,
+        gatewayResponse: payload,
+      },
+      customerId
+    );
   }
 
-  public static async getAll(filter?: {
-    invoiceId?: string;
-    customerId?: string;
-    status?: PaymentStatus;
-  }) {
+  /**
+   * Fetch all payments
+   */
+  async getAllPayments(params?: { customerId?: string; invoiceId?: string }) {
     const where: any = {};
-
-    if (filter?.invoiceId) {
-      where.invoiceId = filter.invoiceId;
-    }
-
-    if (filter?.customerId) {
-      where.customerId = filter.customerId;
-    }
-
-    if (filter?.status) {
-      where.status = filter.status;
-    }
+    if (params?.customerId) where.customerId = params.customerId;
+    if (params?.invoiceId) where.invoiceId = params.invoiceId;
 
     return prisma.payment.findMany({
       where,
       include: {
-        invoice: { select: { id: true, invoiceNumber: true, totalAmount: true } },
-        customer: { select: { id: true, name: true, email: true } },
+        customer: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+        invoice: {
+          select: { invoiceNumber: true, totalAmount: true, status: true },
+        },
       },
       orderBy: { paymentDate: 'desc' },
     });
   }
 
-  public static async getById(id: string) {
+  /**
+   * Fetch payment by ID
+   */
+  async getPaymentById(id: string) {
     const payment = await prisma.payment.findUnique({
       where: { id },
       include: {
-        invoice: true,
         customer: true,
+        invoice: {
+          include: {
+            subscription: true,
+          },
+        },
       },
     });
 
-    if (!payment) {
-      throw new NotFoundError(`Payment with ID ${id} not found.`);
-    }
-
+    if (!payment) throw new Error('Payment record not found');
     return payment;
   }
 }
+
+export const paymentsService = new PaymentsService();

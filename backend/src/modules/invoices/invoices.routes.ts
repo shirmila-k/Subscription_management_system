@@ -1,15 +1,34 @@
 import { Router } from 'express';
-import { InvoicesController } from './invoices.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
-import { authorize } from '../../middlewares/rbac.middleware';
+import { invoicesController } from './invoices.controller';
+import { authenticate, requireStaffOrAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
 router.use(authenticate);
 
-router.get('/', InvoicesController.getAll);
-router.get('/:id', InvoicesController.getById);
-router.get('/:id/pdf', InvoicesController.downloadPdf);
-router.patch('/:id/confirm', authorize('ADMIN', 'STAFF'), InvoicesController.confirm);
+// List invoices
+router.get('/', (req, res, next) => {
+  invoicesController.getAll(req, res, next);
+});
+
+// Download PDF
+router.get('/:id/pdf', (req, res, next) => {
+  invoicesController.downloadPdf(req, res, next);
+});
+
+// View single invoice
+router.get('/:id', (req, res, next) => {
+  invoicesController.getById(req, res, next);
+});
+
+// Manually trigger invoice generation for a subscription
+router.post('/generate', requireStaffOrAdmin, (req, res, next) => {
+  invoicesController.generateForSubscription(req, res, next);
+});
+
+// Update invoice status (e.g., mark VOID or CONFIRMED)
+router.patch('/:id/status', requireStaffOrAdmin, (req, res, next) => {
+  invoicesController.updateStatus(req, res, next);
+});
 
 export default router;

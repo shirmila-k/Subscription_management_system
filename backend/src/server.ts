@@ -1,36 +1,50 @@
-import app from './app';
+import { createApp } from './app';
 import { env } from './config/env';
-import prisma from './config/prisma';
-import { initCronJobs } from './modules/jobs/cronScheduler';
+import { CronJobManager } from './modules/jobs/cron.jobs';
+import prisma from './config/db';
 
-const server = app.listen(env.PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`Brightloop Subscription Management Backend API`);
-  console.log(`Environment: ${env.NODE_ENV}`);
-  console.log(`Server running at: http://localhost:${env.PORT}`);
-  console.log(`Health endpoint:   http://localhost:${env.PORT}/health`);
-  console.log(`=======================================================`);
+const app = createApp();
 
-  // Initialize automated background cron tasks
-  initCronJobs();
+const server = app.listen(env.port, () => {
+  console.log('====================================================');
+  console.log(`🚀 Brightloop Subscription Backend is running!`);
+  console.log(`📡 Environment: ${env.nodeEnv}`);
+  console.log(`🔗 API Base: http://localhost:${env.port}/api/v1`);
+  console.log(`🩺 Health:   http://localhost:${env.port}/health`);
+  console.log('====================================================');
+
+  // Start cron jobs in non-test environments
+  if (env.nodeEnv !== 'test') {
+    CronJobManager.init();
+  }
 });
 
-// Graceful Shutdown Handlers
+// Graceful Shutdown Handler
 const handleShutdown = async (signal: string) => {
-  console.log(`\nReceived ${signal}. Gracefully shutting down...`);
+  console.log(`\n[Server] Received ${signal}. Initiating graceful shutdown...`);
+
+  // Stop cron tasks
+  CronJobManager.stopAll();
+
+  // Close HTTP server
   server.close(async () => {
-    console.log('HTTP server closed.');
+    console.log('[Server] HTTP server closed.');
+
+    // Disconnect Prisma
     await prisma.$disconnect();
-    console.log('Prisma database client disconnected.');
+    console.log('[Database] Prisma client disconnected.');
+
     process.exit(0);
   });
 
-  // Force shutdown after 10s if stuck
+  // Force shutdown after timeout
   setTimeout(() => {
-    console.error('Forcefully terminating process after timeout.');
+    console.error('[Server] Forceful shutdown initiated due to timeout.');
     process.exit(1);
   }, 10000);
 };
 
-process.on('SIGINT', () => handleShutdown('SIGINT'));
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+
+export default server;

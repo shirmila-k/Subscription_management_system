@@ -1,38 +1,33 @@
 import { Request, Response, NextFunction } from 'express';
-import { AppError } from '../utils/errors';
 import { sendError } from '../utils/response';
 
 export const errorHandler = (
-  err: Error | AppError,
-  req: Request,
+  err: any,
+  _req: Request,
   res: Response,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  next: NextFunction
-) => {
-  if (err instanceof AppError) {
-    return sendError(res, err.message, err.statusCode);
+  _next: NextFunction
+): void => {
+  console.error('[Error caught by global handler]:', err);
+
+  // Prisma unique constraint violation (P2002)
+  if (err.code === 'P2002') {
+    const target = err.meta?.target ? `Duplicate field: ${err.meta.target}` : 'Resource already exists';
+    sendError(res, target, 409, err.meta);
+    return;
   }
 
-  // Handle Prisma Known Errors if present
-  if ((err as any).code === 'P2002') {
-    const target = (err as any).meta?.target;
-    return sendError(
-      res,
-      `A unique constraint violation occurred${target ? ` on field: ${target}` : ''}.`,
-      409
-    );
+  // Prisma record not found (P2025)
+  if (err.code === 'P2025') {
+    sendError(res, 'Requested database record not found', 404);
+    return;
   }
 
-  if ((err as any).code === 'P2025') {
-    return sendError(res, 'Requested record does not exist.', 404);
-  }
+  const statusCode = err.statusCode || err.status || 500;
+  const message = err.message || 'Internal Server Error occurred';
 
-  console.error('[Unhandled Error]:', err);
+  sendError(res, message, statusCode, process.env.NODE_ENV === 'development' ? err.stack : undefined);
+};
 
-  const message =
-    process.env.NODE_ENV === 'production'
-      ? 'Internal server error occurred'
-      : err.message || 'Internal server error';
-
-  return sendError(res, message, 500, process.env.NODE_ENV === 'development' ? err.stack : undefined);
+export const notFoundHandler = (req: Request, res: Response): void => {
+  sendError(res, `Route not found: ${req.method} ${req.originalUrl}`, 404);
 };

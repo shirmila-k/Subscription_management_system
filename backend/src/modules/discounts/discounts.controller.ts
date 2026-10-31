@@ -1,80 +1,69 @@
 import { Request, Response, NextFunction } from 'express';
-import { DiscountsService } from './discounts.service';
-import { sendSuccess } from '../../utils/response';
-import { BadRequestError } from '../../utils/errors';
+import { discountsService } from './discounts.service';
+import { sendSuccess, sendError } from '../../utils/response';
 
 export class DiscountsController {
-  public static async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { isActive } = req.query;
-      const discounts = await DiscountsService.getAll({
+      const discounts = await discountsService.getAllDiscounts({
         isActive: isActive !== undefined ? isActive === 'true' : undefined,
       });
-      return sendSuccess(res, discounts);
-    } catch (error) {
+      sendSuccess(res, 'Discounts retrieved successfully', discounts);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async getById(req: Request, res: Response, next: NextFunction) {
+  async getById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const discount = await DiscountsService.getById(req.params.id);
-      return sendSuccess(res, discount);
-    } catch (error) {
+      const discount = await discountsService.getDiscountById(req.params.id);
+      sendSuccess(res, 'Discount retrieved successfully', discount);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
+    }
+  }
+
+  async create(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const discount = await discountsService.createDiscount(req.body);
+      sendSuccess(res, 'Discount rule created successfully', discount, 201);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async validate(req: Request, res: Response, next: NextFunction) {
+  async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { code, quantity, amount } = req.body;
-      if (!code) {
-        throw new BadRequestError('Coupon code is required.');
-      }
-      const result = await DiscountsService.validateCode(code, Number(quantity) || 1, Number(amount) || 0);
-      return sendSuccess(res, result, 'Coupon applied successfully');
-    } catch (error) {
+      const updated = await discountsService.updateDiscount(req.params.id, req.body);
+      sendSuccess(res, 'Discount updated successfully', updated);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async create(req: Request, res: Response, next: NextFunction) {
+  async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { code, type, value, minQuantity, minPurchaseAmount, startDate, endDate, maxUses } = req.body;
-      if (!code || !type || value === undefined || !startDate || !endDate) {
-        throw new BadRequestError('code, type, value, startDate, and endDate are required.');
-      }
-      const discount = await DiscountsService.create({
+      await discountsService.deleteDiscount(req.params.id);
+      sendSuccess(res, 'Discount deleted successfully');
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async validateCode(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { code, quantity, subtotal } = req.body;
+      const result = await discountsService.validateAndApplyDiscount(
         code,
-        type,
-        value: Number(value),
-        minQuantity: minQuantity ? Number(minQuantity) : 1,
-        minPurchaseAmount: minPurchaseAmount ? Number(minPurchaseAmount) : 0,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        maxUses: maxUses ? Number(maxUses) : undefined,
-      });
-      return sendSuccess(res, discount, 'Discount created successfully', 201);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async update(req: Request, res: Response, next: NextFunction) {
-    try {
-      const discount = await DiscountsService.update(req.params.id, req.body);
-      return sendSuccess(res, discount, 'Discount updated successfully');
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async delete(req: Request, res: Response, next: NextFunction) {
-    try {
-      await DiscountsService.delete(req.params.id);
-      return sendSuccess(res, null, 'Discount deleted successfully');
-    } catch (error) {
-      next(error);
+        Number(quantity || 1),
+        Number(subtotal || 0)
+      );
+      sendSuccess(res, 'Discount validated successfully', result);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 }
+
+export const discountsController = new DiscountsController();

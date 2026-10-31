@@ -1,14 +1,18 @@
 import { Router } from 'express';
-import { AnalyticsController } from './analytics.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
-import { authorize } from '../../middlewares/rbac.middleware';
+import { analyticsController } from './analytics.controller';
+import { authenticate, requireStaffOrAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
-router.use(authenticate);
-router.use(authorize('ADMIN', 'STAFF'));
+// Analytics endpoints restricted to Admin & Staff
+router.use(authenticate, requireStaffOrAdmin);
 
-router.get('/summary', AnalyticsController.getSummary);
-router.get('/revenue-trends', AnalyticsController.getRevenueTrends);
+router.get('/overview', (req, res, next) => {
+  analyticsController.getOverview(req, res, next);
+});
+
+router.get('/revenue-trend', (req, res, next) => {
+  analyticsController.getRevenueTrend(req, res, next);
+});
 
 export default router;

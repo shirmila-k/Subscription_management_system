@@ -1,27 +1,26 @@
 import React from 'react';
-import { Navbar } from '../components/Navbar';
-import { Sidebar } from '../components/Sidebar';
+import { Outlet } from 'react-router-dom';
+import { AdminSidebar } from '../components/layout/AdminSidebar';
+import { AdminHeader } from '../components/layout/AdminHeader';
 
-interface AdminLayoutProps {
-  currentTab: string;
-  onTabChange: (tab: string) => void;
-  children: React.ReactNode;
-}
-
-export const AdminLayout: React.FC<AdminLayoutProps> = ({
-  currentTab,
-  onTabChange,
-  children,
-}) => {
+export const AdminLayout: React.FC = () => {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-      <Navbar />
-      <div className="flex-1 flex overflow-hidden">
-        <Sidebar currentTab={currentTab} onTabChange={onTabChange} />
-        <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-b from-slate-900/50 to-slate-950">
-          <div className="max-w-7xl mx-auto space-y-8">{children}</div>
+    <div className="min-h-screen bg-[#FAF9FB] text-[#27212B] font-sans antialiased">
+      {/* Stitch Dark Plum Sidebar */}
+      <AdminSidebar subscriptionCount={2486} />
+
+      {/* Main Content Area (offset by 260px sidebar) */}
+      <div className="pl-[260px] flex flex-col min-h-screen">
+        {/* Stitch Header */}
+        <AdminHeader />
+
+        {/* Dynamic Route Content */}
+        <main className="flex-1 w-full pt-16 px-8 py-8 bg-[#FAF9FB]">
+          <Outlet />
         </main>
       </div>
     </div>
   );
 };
+
+export default AdminLayout;

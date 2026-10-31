@@ -1,17 +1,29 @@
 import { Router } from 'express';
-import { PlansController } from './plans.controller';
-import { authenticate } from '../../middlewares/auth.middleware';
-import { authorize } from '../../middlewares/rbac.middleware';
+import { plansController } from './plans.controller';
+import { authenticate, requireStaffOrAdmin, requireAdmin } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
-// Public / Customer read access
-router.get('/', PlansController.getAll);
-router.get('/:id', PlansController.getById);
+// Public / Authenticated user plan viewing
+router.get('/', (req, res, next) => {
+  plansController.getAll(req, res, next);
+});
 
-// Admin / Staff write access
-router.post('/', authenticate, authorize('ADMIN', 'STAFF'), PlansController.create);
-router.put('/:id', authenticate, authorize('ADMIN', 'STAFF'), PlansController.update);
-router.delete('/:id', authenticate, authorize('ADMIN'), PlansController.delete);
+router.get('/:id', (req, res, next) => {
+  plansController.getById(req, res, next);
+});
+
+// Admin & Staff Operations
+router.post('/', authenticate, requireStaffOrAdmin, (req, res, next) => {
+  plansController.create(req, res, next);
+});
+
+router.put('/:id', authenticate, requireStaffOrAdmin, (req, res, next) => {
+  plansController.update(req, res, next);
+});
+
+router.delete('/:id', authenticate, requireAdmin, (req, res, next) => {
+  plansController.delete(req, res, next);
+});
 
 export default router;

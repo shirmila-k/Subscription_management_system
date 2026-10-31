@@ -1,80 +1,56 @@
 import { Request, Response, NextFunction } from 'express';
-import { AuthService } from './auth.service';
-import { sendSuccess } from '../../utils/response';
-import { BadRequestError } from '../../utils/errors';
+import { authService } from './auth.service';
+import { sendSuccess, sendError } from '../../utils/response';
 
 export class AuthController {
-  public static async register(req: Request, res: Response, next: NextFunction) {
+  async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { email, password, name, role, companyName, phone } = req.body;
-      if (!email || !password || !name) {
-        throw new BadRequestError('Email, password, and name are required fields.');
-      }
-
-      const result = await AuthService.register({
-        email,
-        password,
-        name,
-        role,
-        companyName,
-        phone,
-      });
-
-      return sendSuccess(res, result, 'User registered successfully', 201);
-    } catch (error) {
+      const result = await authService.register(req.body);
+      sendSuccess(res, 'User registered successfully', result, 201);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async login(req: Request, res: Response, next: NextFunction) {
+  async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { email, password } = req.body;
-      if (!email || !password) {
-        throw new BadRequestError('Email and password are required.');
-      }
+      const result = await authService.login(req.body);
+      sendSuccess(res, 'Login successful', result);
+    } catch (error: any) {
+      sendError(res, error.message || 'Invalid credentials', 401);
+    }
+  }
 
-      const result = await AuthService.login({ email, password });
-      return sendSuccess(res, result, 'Login successful');
-    } catch (error) {
+  async getMe(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        sendError(res, 'Unauthenticated', 401);
+        return;
+      }
+      const user = await authService.getProfile(req.user.id);
+      sendSuccess(res, 'Current user profile retrieved', user);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+  async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { email } = req.body;
-      if (!email) {
-        throw new BadRequestError('Email is required.');
-      }
-
-      const result = await AuthService.forgotPassword(email);
-      return sendSuccess(res, result);
-    } catch (error) {
+      const result = await authService.generatePasswordResetToken(req.body.email);
+      sendSuccess(res, result.message, result);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async resetPassword(req: Request, res: Response, next: NextFunction) {
+  async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { token, newPassword } = req.body;
-      if (!token || !newPassword) {
-        throw new BadRequestError('Reset token and new password are required.');
-      }
-
-      const result = await AuthService.resetPassword(token, newPassword);
-      return sendSuccess(res, result);
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public static async getMe(req: Request, res: Response, next: NextFunction) {
-    try {
-      const userId = req.user!.userId;
-      const user = await AuthService.getProfile(userId);
-      return sendSuccess(res, user);
-    } catch (error) {
-      next(error);
+      const result = await authService.resetPassword(req.body);
+      sendSuccess(res, result.message, result);
+    } catch (error: any) {
+      sendError(res, error.message || 'Failed to reset password', 400);
     }
   }
 }
+
+export const authController = new AuthController();

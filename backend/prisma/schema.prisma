@@ -1,6 +1,3 @@
-// Brightloop Software - Subscription Management System
-// Prisma Schema for MySQL
-
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
@@ -10,7 +7,11 @@ generator client {
   provider = "prisma-client-js"
 }
 
-enum Role {
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum UserRole {
   ADMIN
   STAFF
   CUSTOMER
@@ -30,11 +31,18 @@ enum SubscriptionStatus {
   ACTIVE
   PAUSED
   CLOSED
+  CANCELLED
+}
+
+enum PaymentTerms {
+  IMMEDIATE
+  NET_15
+  NET_30
+  NET_60
 }
 
 enum InvoiceStatus {
   DRAFT
-  CONFIGURED
   CONFIRMED
   PAID
   OVERDUE
@@ -42,22 +50,16 @@ enum InvoiceStatus {
 }
 
 enum DiscountType {
-  FIXED
   PERCENTAGE
-}
-
-enum PaymentTerms {
-  IMMEDIATE
-  NET15
-  NET30
-  NET60
+  FIXED
 }
 
 enum PaymentMethod {
-  RAZORPAY
-  STRIPE
   CREDIT_CARD
   BANK_TRANSFER
+  UPI
+  RAZORPAY
+  STRIPE
   CASH
 }
 
@@ -68,93 +70,113 @@ enum PaymentStatus {
   REFUNDED
 }
 
-model User {
-  id               String    @id @default(uuid())
-  email            String    @unique
-  passwordHash     String
-  name             String
-  role             Role      @default(CUSTOMER)
-  companyName      String?
-  phone            String?
-  address          String?
-  resetToken       String?
-  resetTokenExpiry DateTime?
-  isActive         Boolean   @default(true)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+// -------------------------------------------------------------
+// USER & AUTH
+// -------------------------------------------------------------
 
-  subscriptions Subscription[]
-  invoices      Invoice[]
-  payments      Payment[]
+model User {
+  id                   String    @id @default(uuid())
+  email                String    @unique
+  passwordHash         String
+  role                 UserRole  @default(CUSTOMER)
+  firstName            String
+  lastName             String
+  companyName          String?
+  phone                String?
+  address              String?
+  taxId                String?   // GST/VAT/Tax number
+  isActive             Boolean   @default(true)
+  resetPasswordToken   String?   @unique
+  resetPasswordExpiry  DateTime?
+  lastLoginAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Relationships
+  customerSubscriptions Subscription[] @relation("CustomerSubscriptions")
+  managedSubscriptions  Subscription[] @relation("ManagedSubscriptions")
+  invoices              Invoice[]
+  payments              Payment[]
+  auditLogs             AuditLog[]
 
   @@index([role])
   @@index([email])
   @@map("users")
 }
 
+// -------------------------------------------------------------
+// PRODUCTS & VARIANTS
+// -------------------------------------------------------------
+
 model Product {
-  id          String   @id @default(uuid())
+  id          String           @id @default(uuid())
   name        String
-  description String?  @db.Text
-  sku         String   @unique
-  brand       String?
+  code        String           @unique // e.g. PROD-ODOO-CORE
+  description String?          @db.Text
   category    String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  brand       String?          // Brand or suite integration (e.g., Odoo, Brightloop Suite)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
-  variants ProductVariant[]
-  plans    Plan[]
+  // Relationships
+  variants    ProductVariant[]
+  plans       Plan[]
 
-  @@index([sku])
   @@index([isActive])
+  @@index([brand])
   @@map("products")
 }
 
 model ProductVariant {
-  id         String   @id @default(uuid())
-  productId  String
-  name       String
-  sku        String   @unique
-  attributes Json?
-  extraCost  Decimal  @default(0.00) @db.Decimal(10, 2)
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name            String   // e.g. "Enterprise Edition", "Multi-brand Tier", "Pro Support"
+  sku             String   @unique
+  priceAdjustment Decimal  @default(0.00) @db.Decimal(10, 2)
+  attributes      Json?    // Dynamic custom attributes e.g. { "brandAddon": true, "maxUsers": 50 }
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
-  plans             Plan[]
-  subscriptionItems SubscriptionItem[]
+  // Relationships
+  plans           Plan[]
 
   @@index([productId])
-  @@index([sku])
   @@map("product_variants")
 }
 
-model Plan {
-  id               String           @id @default(uuid())
-  productId        String
-  variantId        String?
-  name             String
-  description      String?          @db.Text
-  billingFrequency BillingFrequency
-  cost             Decimal          @db.Decimal(10, 2)
-  currency         String           @default("USD")
-  minimumQuantity  Int              @default(1)
-  validFrom        DateTime?
-  validUntil       DateTime?
-  autoClose        Boolean          @default(true)
-  autoRenew        Boolean          @default(true)
-  pauseAllowed     Boolean          @default(true)
-  trialPeriodDays  Int              @default(0)
-  gracePeriodDays  Int              @default(7)
-  isActive         Boolean          @default(true)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+// -------------------------------------------------------------
+// PLANS & PRICING
+// -------------------------------------------------------------
 
-  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-  subscriptions Subscription[]
+model Plan {
+  id                 String           @id @default(uuid())
+  productId          String
+  product            Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId          String?
+  variant            ProductVariant?  @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  name               String
+  code               String           @unique // e.g. PLAN-M-ENTERPRISE
+  description        String?          @db.Text
+  billingFrequency   BillingFrequency @default(MONTHLY)
+  billingCycleDays   Int              @default(30) // 1 (Daily), 7 (Weekly), 30 (Monthly), 365 (Yearly)
+  price              Decimal          @db.Decimal(10, 2)
+  currency           String           @default("USD")
+  minQuantity        Int              @default(1)
+  availableFrom      DateTime?
+  availableTo        DateTime?
+  autoCloseOnExpiry  Boolean          @default(true)
+  canPause           Boolean          @default(true)
+  autoRenew          Boolean          @default(true)
+  trialDays          Int              @default(0)
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  // Relationships
+  subscriptions      Subscription[]
 
   @@index([productId])
   @@index([billingFrequency])
@@ -162,154 +184,202 @@ model Plan {
   @@map("plans")
 }
 
-model Discount {
-  id                String       @id @default(uuid())
-  code              String       @unique
-  type              DiscountType @default(PERCENTAGE)
-  value             Decimal      @db.Decimal(10, 2)
-  minQuantity       Int          @default(1)
-  minPurchaseAmount Decimal      @default(0.00) @db.Decimal(10, 2)
-  startDate         DateTime
-  endDate           DateTime
-  maxUses           Int?
-  usedCount         Int          @default(0)
-  isActive          Boolean      @default(true)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+// -------------------------------------------------------------
+// DISCOUNTS & PROMOTIONS
+// -------------------------------------------------------------
 
-  subscriptions Subscription[]
+model Discount {
+  id                String         @id @default(uuid())
+  code              String         @unique // e.g. PROMO2026, BRIGHT50
+  description       String?
+  type              DiscountType   @default(PERCENTAGE)
+  value             Decimal        @db.Decimal(10, 2) // 15.00 for 15% or 50.00 for $50 fixed
+  minQuantity       Int            @default(1)
+  minPurchaseAmount Decimal?       @db.Decimal(10, 2)
+  maxDiscountAmount Decimal?       @db.Decimal(10, 2) // Ceiling for percentage discounts
+  startDate         DateTime       @default(now())
+  endDate           DateTime?
+  usageLimit        Int?           // Max total redemptions permitted
+  timesUsed         Int            @default(0)
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  // Relationships
+  subscriptions     Subscription[]
 
   @@index([code])
   @@index([isActive])
   @@map("discounts")
 }
 
-model Subscription {
-  id                 String             @id @default(uuid())
-  subscriptionNumber String             @unique
-  customerId         String
-  planId             String
-  discountId         String?
-  status             SubscriptionStatus @default(DRAFT)
-  quantity           Int                @default(1)
-  unitPrice          Decimal            @db.Decimal(10, 2)
-  discountAmount     Decimal            @default(0.00) @db.Decimal(10, 2)
-  totalAmount        Decimal            @db.Decimal(10, 2)
-  paymentTerms       PaymentTerms       @default(IMMEDIATE)
-  startDate          DateTime?
-  expiryDate         DateTime?
-  nextBillingDate    DateTime?
-  lastBilledDate     DateTime?
-  cancelledAt        DateTime?
-  cancellationReason String?
-  quotationNotes     String?            @db.Text
-  quotationExpiresAt DateTime?
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+// -------------------------------------------------------------
+// SUBSCRIPTIONS & LIFECYCLE
+// -------------------------------------------------------------
 
-  customer User               @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan     Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
-  discount Discount?          @relation(fields: [discountId], references: [id], onDelete: SetNull)
-  invoices Invoice[]
-  items    SubscriptionItem[]
+model Subscription {
+  id                  String             @id @default(uuid())
+  subscriptionNumber  String             @unique // e.g. SUB-2026-0001
+  customerId          String
+  customer            User               @relation("CustomerSubscriptions", fields: [customerId], references: [id])
+  createdById         String?
+  createdBy           User?              @relation("ManagedSubscriptions", fields: [createdById], references: [id], onDelete: SetNull)
+  planId              String
+  plan                Plan               @relation(fields: [planId], references: [id])
+  status              SubscriptionStatus @default(DRAFT)
+  quantity            Int                @default(1)
+  unitPrice           Decimal            @db.Decimal(10, 2)
+  discountId          String?
+  discount            Discount?          @relation(fields: [discountId], references: [id], onDelete: SetNull)
+  discountAmount      Decimal            @default(0.00) @db.Decimal(10, 2)
+  taxRate             Decimal            @default(18.00) @db.Decimal(5, 2)
+  taxAmount           Decimal            @default(0.00) @db.Decimal(10, 2)
+  subtotal            Decimal            @db.Decimal(10, 2)
+  totalAmount         Decimal            @db.Decimal(10, 2)
+  paymentTerms        PaymentTerms       @default(NET_30)
+  
+  // Lifecycle Dates
+  startDate           DateTime
+  nextBillingDate     DateTime?
+  expiryDate          DateTime?
+  autoRenew           Boolean            @default(true)
+  quotationSentAt     DateTime?
+  quotationAcceptedAt DateTime?
+  confirmedAt         DateTime?
+  activatedAt         DateTime?
+  pausedAt            DateTime?
+  closedAt            DateTime?
+  cancellationReason  String?            @db.Text
+  notes               String?            @db.Text
+  
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // Relationships
+  invoices            Invoice[]
+  lifecycleLogs       SubscriptionLifecycleLog[]
 
   @@index([customerId])
-  @@index([planId])
   @@index([status])
   @@index([nextBillingDate])
   @@index([expiryDate])
   @@map("subscriptions")
 }
 
-model SubscriptionItem {
-  id             String   @id @default(uuid())
+model SubscriptionLifecycleLog {
+  id             String             @id @default(uuid())
   subscriptionId String
-  variantId      String?
-  description    String
-  quantity       Int      @default(1)
-  unitPrice      Decimal  @db.Decimal(10, 2)
-  subtotal       Decimal  @db.Decimal(10, 2)
-  createdAt      DateTime @default(now())
-
-  subscription Subscription    @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  subscription   Subscription       @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  fromStatus     SubscriptionStatus
+  toStatus       SubscriptionStatus
+  action         String             // e.g. "SENT_QUOTATION", "ACCEPTED_QUOTATION", "CONFIRMED", "ACTIVATED", "PAUSED", "AUTO_CLOSED"
+  notes          String?            @db.Text
+  performedById  String?
+  createdAt      DateTime           @default(now())
 
   @@index([subscriptionId])
-  @@map("subscription_items")
+  @@map("subscription_lifecycle_logs")
 }
+
+// -------------------------------------------------------------
+// INVOICES & BILLING
+// -------------------------------------------------------------
 
 model Invoice {
   id                 String        @id @default(uuid())
-  invoiceNumber      String        @unique
-  subscriptionId     String?
+  invoiceNumber      String        @unique // e.g. INV-2026-0001
+  subscriptionId     String
+  subscription       Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   customerId         String
+  customer           User          @relation(fields: [customerId], references: [id])
   status             InvoiceStatus @default(DRAFT)
+  issueDate          DateTime      @default(now())
+  dueDate            DateTime
+  billingPeriodStart DateTime
+  billingPeriodEnd   DateTime
   subtotal           Decimal       @db.Decimal(10, 2)
-  taxRate            Decimal       @default(0.18) @db.Decimal(5, 2)
+  taxRate            Decimal       @default(18.00) @db.Decimal(5, 2)
   taxAmount          Decimal       @db.Decimal(10, 2)
   discountAmount     Decimal       @default(0.00) @db.Decimal(10, 2)
   totalAmount        Decimal       @db.Decimal(10, 2)
-  currency           String        @default("USD")
-  billingPeriodStart DateTime?
-  billingPeriodEnd   DateTime?
-  issueDate          DateTime      @default(now())
-  dueDate            DateTime
-  paidAt             DateTime?
+  amountPaid         Decimal       @default(0.00) @db.Decimal(10, 2)
+  balanceDue         Decimal       @db.Decimal(10, 2)
   notes              String?       @db.Text
-  pdfUrl             String?
+  pdfPath            String?       // Local file path or cloud URL
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
-  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  customer     User          @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  payments     Payment[]
-  items        InvoiceItem[]
+  // Relationships
+  items              InvoiceItem[]
+  payments           Payment[]
 
-  @@index([subscriptionId])
   @@index([customerId])
+  @@index([subscriptionId])
   @@index([status])
   @@index([dueDate])
+  @@index([issueDate])
   @@map("invoices")
 }
 
 model InvoiceItem {
   id          String   @id @default(uuid())
   invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
   quantity    Int      @default(1)
   unitPrice   Decimal  @db.Decimal(10, 2)
-  taxRate     Decimal  @default(0.18) @db.Decimal(5, 2)
   amount      Decimal  @db.Decimal(10, 2)
   createdAt   DateTime @default(now())
-
-  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
   @@map("invoice_items")
 }
 
+// -------------------------------------------------------------
+// PAYMENTS & RECONCILIATION
+// -------------------------------------------------------------
+
 model Payment {
   id                   String        @id @default(uuid())
-  paymentNumber        String        @unique
+  paymentNumber        String        @unique // e.g. PAY-2026-0001
   invoiceId            String
+  invoice              Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   customerId           String
+  customer             User          @relation(fields: [customerId], references: [id])
   amount               Decimal       @db.Decimal(10, 2)
   currency             String        @default("USD")
-  method               PaymentMethod
-  status               PaymentStatus @default(PENDING)
-  transactionReference String?
-  razorpayOrderId      String?
-  razorpaySignature    String?
+  paymentMethod        PaymentMethod @default(CREDIT_CARD)
+  status               PaymentStatus @default(SUCCESS)
   paymentDate          DateTime      @default(now())
+  transactionReference String?       // e.g. Razorpay payment_id, Stripe ch_xxx, Bank UTR
+  gatewayResponse      Json?         // Webhook or gateway raw response payload
   notes                String?       @db.Text
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
-  invoice  Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  customer User    @relation(fields: [customerId], references: [id], onDelete: Restrict)
-
   @@index([invoiceId])
   @@index([customerId])
   @@index([status])
+  @@index([paymentDate])
   @@map("payments")
+}
+
+// -------------------------------------------------------------
+// AUDIT LOGS
+// -------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String   // e.g. "SUBSCRIPTION", "INVOICE", "PAYMENT", "DISCOUNT"
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

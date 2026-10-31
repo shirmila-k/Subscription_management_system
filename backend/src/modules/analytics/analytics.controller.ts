@@ -1,23 +1,25 @@
 import { Request, Response, NextFunction } from 'express';
-import { AnalyticsService } from './analytics.service';
+import { analyticsService } from './analytics.service';
 import { sendSuccess } from '../../utils/response';
 
 export class AnalyticsController {
-  public static async getSummary(req: Request, res: Response, next: NextFunction) {
+  async getOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const summary = await AnalyticsService.getDashboardSummary();
-      return sendSuccess(res, summary);
-    } catch (error) {
+      const metrics = await analyticsService.getExecutiveDashboardMetrics();
+      sendSuccess(res, 'Analytics overview metrics retrieved successfully', metrics);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async getRevenueTrends(req: Request, res: Response, next: NextFunction) {
+  async getRevenueTrend(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const trends = await AnalyticsService.getRevenueTrends();
-      return sendSuccess(res, trends);
-    } catch (error) {
+      const trend = await analyticsService.getMonthlyRevenueTrend();
+      sendSuccess(res, 'Revenue trend data retrieved', trend);
+    } catch (error: any) {
       next(error);
     }
   }
 }
+
+export const analyticsController = new AnalyticsController();

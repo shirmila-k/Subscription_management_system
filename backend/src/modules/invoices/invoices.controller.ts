@@ -1,55 +1,81 @@
 import { Request, Response, NextFunction } from 'express';
-import { InvoicesService } from './invoices.service';
-import { sendSuccess } from '../../utils/response';
-import { InvoiceStatus } from '@prisma/client';
+import { invoicesService } from './invoices.service';
+import { sendSuccess, sendError } from '../../utils/response';
+import { InvoiceStatus, UserRole } from '@prisma/client';
 
 export class InvoicesController {
-  public static async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { customerId, status, subscriptionId } = req.query;
+      const { customerId, subscriptionId, status, search } = req.query;
 
-      // If user is a customer, only fetch their invoices
-      const effectiveCustomerId =
-        req.user?.role === 'CUSTOMER' ? req.user.userId : (customerId as string);
+      let targetCustomerId = customerId as string | undefined;
+      if (req.user?.role === UserRole.CUSTOMER) {
+        targetCustomerId = req.user.id;
+      }
 
-      const invoices = await InvoicesService.getAll({
-        customerId: effectiveCustomerId,
-        status: status as InvoiceStatus,
+      const invoices = await invoicesService.getAllInvoices({
+        customerId: targetCustomerId,
         subscriptionId: subscriptionId as string,
+        status: status as InvoiceStatus,
+        search: search as string,
       });
 
-      return sendSuccess(res, invoices);
-    } catch (error) {
+      sendSuccess(res, 'Invoices retrieved successfully', invoices);
+    } catch (error: any) {
       next(error);
     }
   }
 
-  public static async getById(req: Request, res: Response, next: NextFunction) {
+  async getById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const invoice = await InvoicesService.getById(req.params.id);
-      return sendSuccess(res, invoice);
-    } catch (error) {
-      next(error);
+      const invoice = await invoicesService.getInvoiceById(req.params.id);
+
+      if (req.user?.role === UserRole.CUSTOMER && invoice.customerId !== req.user.id) {
+        sendError(res, 'Access denied: not your invoice', 403);
+        return;
+      }
+
+      sendSuccess(res, 'Invoice retrieved successfully', invoice);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
     }
   }
 
-  public static async confirm(req: Request, res: Response, next: NextFunction) {
+  async generateForSubscription(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const invoice = await InvoicesService.confirmInvoice(req.params.id);
-      return sendSuccess(res, invoice, 'Invoice confirmed');
-    } catch (error) {
-      next(error);
+      const { subscriptionId } = req.body;
+      if (!subscriptionId) {
+        sendError(res, 'Subscription ID is required', 400);
+        return;
+      }
+      const invoice = await invoicesService.generateInvoiceForSubscription(subscriptionId);
+      sendSuccess(res, 'Invoice generated successfully', invoice, 201);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 
-  public static async downloadPdf(req: Request, res: Response, next: NextFunction) {
+  async downloadPdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const pdfBuffer = await InvoicesService.getPdfBuffer(req.params.id);
+      const { buffer, filename } = await invoicesService.getInvoicePdfBuffer(req.params.id);
+
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename=invoice-${req.params.id}.pdf`);
-      return res.send(pdfBuffer);
-    } catch (error) {
-      next(error);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (error: any) {
+      sendError(res, error.message, 404);
+    }
+  }
+
+  async updateStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { status } = req.body;
+      const updated = await invoicesService.updateStatus(req.params.id, status as InvoiceStatus);
+      sendSuccess(res, 'Invoice status updated', updated);
+    } catch (error: any) {
+      sendError(res, error.message, 400);
     }
   }
 }
+
+export const invoicesController = new InvoicesController();

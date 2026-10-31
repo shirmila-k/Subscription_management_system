@@ -1,145 +1,125 @@
 # Brightloop Software — Subscription Management System
 
-Enterprise-grade, modular subscription billing and contract lifecycle platform built with **Node.js, Express.js, TypeScript, MySQL (via Prisma ORM), Tailwind CSS, and React.js**.
+A production-grade, enterprise-ready full-stack Subscription Management System built with **Node.js, Express.js, TypeScript, MySQL (via Prisma ORM), React.js, Vite, and Tailwind CSS**.
 
 ---
 
-## 🏛 System Architecture & Modular Layout
+## 🌟 Architecture & Core Features
 
+### 1. Database & Prisma Schema (`backend/prisma/schema.prisma`)
+- **User Model & RBAC**: Roles: `ADMIN`, `STAFF`, `CUSTOMER`. Secure bcrypt hashing (salt rounds: 12), strict password regex enforcement, and crypto-signed password recovery tokens.
+- **Product & Brand Variants**: Multi-brand catalogue support (e.g., Odoo Ecosystem, Brightloop Suite) with SKU definitions, price adjustments, and dynamic JSON attributes.
+- **Plan Model**: Daily, weekly, monthly, and annual billing frequencies (`billingCycleDays`), minimum order quantities, availability windows, and automated lifecycle policies (`autoCloseOnExpiry`, `canPause`, `autoRenew`).
+- **Subscription Lifecycle Engine**: Strict state machine moving through:
+  $$\text{DRAFT} \longrightarrow \text{QUOTATION} \longrightarrow \text{CONFIRMED} \longrightarrow \text{ACTIVE} \longrightarrow \text{CLOSED / CANCELLED}$$
+  with pause/resume capabilities and full immutable transition logging in `SubscriptionLifecycleLog`.
+- **Invoices & Billing**: Automated billing generation from active subscriptions, 18% configurable tax calculations, payment terms (`IMMEDIATE`, `NET_15`, `NET_30`, `NET_60`), status lifecycle (`DRAFT` &rarr; `CONFIRMED` &rarr; `PAID` / `OVERDUE`), and on-the-fly **PDFKit PDF generation**.
+- **Discount Engine**: Fixed and percentage-based admin coupons with minimum quantity, minimum subtotal, percentage discount ceilings, expiration dates, and usage limits.
+- **Payment & Reconciliation**: Multi-method recording (`CREDIT_CARD`, `BANK_TRANSFER`, `UPI`, `RAZORPAY`, `STRIPE`, `CASH`) with atomic transactions that deduct balance due and auto-mark invoices as `PAID`.
+
+---
+
+### 2. Modular Backend (`backend/src/modules/`)
+Organized by strict domain boundaries:
 ```
-subscription_management/
-├── backend/
-│   ├── prisma/
-│   │   ├── schema.prisma            # MySQL Prisma schema (Users, Products, Plans, Subscriptions, Invoices, Payments, Discounts)
-│   │   └── seed.ts                  # Database seeder (Admin, Staff, Customer, sample ERP products & plans)
-│   ├── src/
-│   │   ├── config/
-│   │   │   ├── env.ts               # Environment configuration
-│   │   │   └── prisma.ts            # Prisma client singleton
-│   │   ├── middlewares/
-│   │   │   ├── auth.middleware.ts   # JWT authentication & request decorator
-│   │   │   ├── rbac.middleware.ts   # Role-Based Access Control (ADMIN, STAFF, CUSTOMER)
-│   │   │   └── error.middleware.ts  # Centralized error handler
-│   │   ├── modules/
-│   │   │   ├── auth/                # JWT auth, bcrypt hashing, password reset tokens, RBAC
-│   │   │   ├── products/            # Admin CRUD for products & brand variants (Odoo style)
-│   │   │   ├── plans/               # Pricing plans, billing cadence, and lifecycle rules
-│   │   │   ├── subscriptions/       # Quotation templates, quote-to-subscription conversion, state transitions
-│   │   │   ├── invoices/            # Automated billing cycle invoice generation, 18% tax, PDFKit engine
-│   │   │   ├── payments/            # Razorpay / Stripe payment recording, signature verification, invoice reconciliation
-│   │   │   ├── discounts/           # Promo vouchers, minimum quantity rules, date & usage constraints
-│   │   │   ├── analytics/           # Sub-2-second summary telemetry (MRR, ARR, overdue receivables)
-│   │   │   └── jobs/                # Node-cron background jobs (automated billing, reminders, auto-closures)
-│   │   ├── utils/
-│   │   │   ├── pdfGenerator.ts      # Vector PDF invoice generator via PDFKit
-│   │   │   ├── response.ts          # Standardized API response formatters
-│   │   │   └── errors.ts            # Typed operational HTTP error classes
-│   │   ├── app.ts                   # Express app setup, security middlewares, routes
-│   │   └── server.ts                # Server bootstrap, cron scheduler startup, graceful termination
-│   ├── .env.example
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/              # Navbar, Sidebar, StatCard, Badge, Modal
-│   │   ├── context/                 # AuthContext (JWT session, RBAC role state, 1-click sandbox switcher)
-│   │   ├── layouts/                 # AdminLayout, CustomerLayout, StaffLayout, AuthLayout
-│   │   ├── pages/
-│   │   │   ├── admin/               # Dashboard, Subscriptions, Products, Plans, Invoices, Discounts
-│   │   │   ├── customer/            # CustomerPortal, CustomerCatalog, CustomerInvoices
-│   │   │   ├── staff/               # StaffPanel (Quotation approval queue)
-│   │   │   └── auth/                # LoginPage, RegisterPage
-│   │   ├── services/                # ApiClient with JWT injection and PDF stream downloader
-│   │   ├── types/                   # Unified TypeScript schemas matching Prisma models
-│   │   ├── App.tsx                  # Dynamic multi-role router
-│   │   ├── main.tsx                 # React DOM entry point
-│   │   └── index.css                # Tailwind directives & glassmorphism theme
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   └── tsconfig.json
-└── README.md
+backend/src/
+├── config/             # Typed environment variables and Prisma singleton
+├── middlewares/        # JWT auth guard, RBAC (requireRole), Zod validation, error handler
+├── modules/
+│   ├── auth/           # JWT issue, bcrypt hashing, password reset, RBAC
+│   ├── products/       # Products & brand variants CRUD
+│   ├── plans/          # Billing frequency calculations & pricing plans
+│   ├── discounts/      # Discount rule verification & application algorithm
+│   ├── subscriptions/  # Quotation workflow, quote-to-subscription conversion, lifecycle
+│   ├── invoices/       # Automated billing generation, PDFKit PDF generation
+│   ├── payments/       # Atomic invoice reconciliation & Razorpay webhook integration
+│   ├── analytics/      # Concurrent aggregate queries (<2s SLA) for MRR, ARR, and overdue metrics
+│   └── jobs/           # Node-cron background workers (billing, reminders, auto-close, overdue)
+├── types/              # Express request user typing extensions
+├── utils/              # Standardized API response formatters
+├── app.ts              # Express application setup, Helmet, CORS, Morgan logger
+└── server.ts           # Server startup, graceful shutdown, cron initialization
 ```
 
 ---
 
-## 🗄 1. Database & Prisma Schema (`schema.prisma`)
-
-Provider: **MySQL**
-
-### Key Models & Relationships:
-1. **User**: Roles `ADMIN`, `STAFF`, `CUSTOMER`. Strict password hashing (bcrypt), reset tokens, and company metadata.
-2. **Product & ProductVariant**: Brand additions (e.g. Odoo brand accessories/attributes), SKU uniqueness, and extra variant costs.
-3. **Plan**: Billing frequencies (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`), currency, minimum quantities, availability dates, and lifecycle flags:
-   - `autoClose` (closes on expiration/non-payment after grace period)
-   - `autoRenew` (auto-renews contract period)
-   - `pauseAllowed` (permits customers/staff to pause subscriptions)
-   - `trialPeriodDays` & `gracePeriodDays`
-4. **Subscription**: Lifecycle states:
-   $$\text{DRAFT} \longrightarrow \text{QUOTATION} \longrightarrow \text{CONFIRMED} \longrightarrow \text{ACTIVE} \longrightarrow \text{CLOSED}$$
-   *(Includes `PAUSED` state).* Tracks quantity, discounts applied, next billing date, and payment terms (`IMMEDIATE`, `NET15`, `NET30`, `NET60`).
-5. **Invoice**: States `DRAFT` $\rightarrow$ `CONFIGURED/CONFIRMED` $\rightarrow$ `PAID` / `OVERDUE`. Includes 18% standard tax computation, line item breakdown, and automatic generation from subscriptions.
-6. **Payment**: Supports `RAZORPAY`, `STRIPE`, `CREDIT_CARD`, `BANK_TRANSFER`. Verifies gateway signatures and automatically marks invoices as `PAID` upon full reconciliation.
-7. **Discount**: Percentage or fixed amounts, minimum quantity rules, minimum purchase thresholds, usage limits, and date validity checks.
+### 3. Background Jobs (`node-cron`)
+Automated daily background tasks:
+1. **Daily Automated Billing Cycle (`0 2 * * *`)**: Identifies active subscriptions due on `nextBillingDate`, automatically generates new `Invoice`, and advances next billing date.
+2. **Renewal & Expiry Reminders (`0 8 * * *`)**: Dispatches renewal notices for subscriptions expiring within 7 days.
+3. **Expired Subscriptions Closure (`0 0 * * *`)**: Auto-closes non-renewing subscriptions that reach their expiration date.
+4. **Overdue Invoice Tracker (`0 */6 * * *`)**: Monitors unpaid confirmed invoices past due terms and marks them as `OVERDUE`.
 
 ---
 
-## ⚡ 2. Modular Backend Architecture
-
-All business logic is isolated within domain modules under `src/modules/`:
-- **Auth**: RBAC middleware (`authorize('ADMIN', 'STAFF')`), strict regex password validation, and signed JWTs.
-- **Subscriptions Service**: Calculates next billing cycle dates, quotation expiry, quantity validation, and converts quotations into active subscriptions while triggering initial invoices.
-- **Invoices Service & PDFKit**: Generates downloadable PDF invoices with brand headers, line items, and tax calculations.
-- **Analytics Service**: High-performance indexed aggregations for **MRR (Monthly Recurring Revenue)**, **ARR**, overdue receivables, and status pipelines under 2-second target latencies.
-- **Background Cron Jobs (`src/modules/jobs/cronScheduler.ts`)**:
-  - `00:05 Daily`: Automated billing day invoice generation for subscriptions due.
-  - `08:00 Daily`: Scans for contracts expiring in the next 7 days and dispatches renewal reminders.
-  - `01:00 Daily`: Auto-closes expired subscriptions whose plan mandates `autoClose`.
-  - `Every 6 Hours`: Scans confirmed/draft invoices past their due date and transitions them to `OVERDUE`.
+### 4. Frontend Structure (`frontend/src/`)
+- **React 18 + Vite + TypeScript + Tailwind CSS**
+- **Authentication Context (`AuthContext.tsx`)**: Global session management, JWT storage, and role-based redirecting.
+- **Separated Layouts & Portals**:
+  - **Admin Dashboard (`/admin`)**: Executive KPI cards, real-time query latency badge, subscription pipeline breakdown, and manual background task triggers.
+  - **Customer Portal (`/customer`)**: Self-serve subscription management, outstanding balance summary, PDF invoice downloads, and product catalog ordering.
+  - **Staff Panel (`/staff`)**: Sales operations pipeline, quotation creation, and quote-to-subscription conversion tools.
 
 ---
 
-## 🎨 3. Frontend Architecture
+## 🚀 Getting Started
 
-Built with **React 18 + Vite + TypeScript + Tailwind CSS**:
-- **Role-Based Views**:
-  - **Admin Dashboard**: Real-time telemetry, MRR/ARR cards, lifecycle state tables, product/plan configurator, and voucher manager.
-  - **Customer Portal**: Active subscriptions view, next billing dates, pause/resume controls, coupon-enabled catalog, and Pay Now invoice settlement with PDF download.
-  - **Staff Panel**: Dedicated queue for reviewing incoming quotation requests and confirming/activating orders.
-- **1-Click Sandbox Switcher**: Top navbar and login screen offer 1-click evaluation shortcuts to switch instantly between Admin, Staff, and Customer sessions.
+### Prerequisites
+- **Node.js** v18+ (tested on Node v24)
+- **MySQL Database** (local instance or cloud e.g. PlanetScale, AWS RDS, Docker)
 
----
+### 1. Configure Database Connection
+Edit `backend/.env` with your MySQL database credentials:
+```env
+DATABASE_URL="mysql://root:your_mysql_password@localhost:3306/brightloop_subscriptions"
+PORT=5000
+JWT_SECRET="your_production_secret_key"
+FRONTEND_URL="http://localhost:5173"
+BILLING_TAX_PERCENT=18.00
+```
 
-## 🚀 Quickstart Guide
-
-### 1. Backend Setup
+### 2. Generate Prisma Client & Run Migrations
 ```bash
-cd backend
-npm install
+# Push schema to MySQL database
+npm run prisma:migrate
 
-# Configure your MySQL connection in .env
-cp .env.example .env
-
-# Generate Prisma client and migrate database
-npx prisma generate
-npx prisma migrate dev --name init
-
-# Seed default admin, staff, customer, products, and plans
+# Seed demo users, products, plans, and discounts
 npm run prisma:seed
-
-# Start the dev server
-npm run dev
 ```
-Backend runs at `http://localhost:5000` (Health check: `http://localhost:5000/health`).
 
-### 2. Frontend Setup
+### 3. Start Development Servers
+From the root workspace directory:
 ```bash
-cd ../frontend
-npm install
+# Start Backend (Express + TypeScript on port 5000)
+npm run dev:backend
 
-# Start Vite dev server
-npm run dev
+# Start Frontend (React + Vite + Tailwind on port 5173)
+npm run dev:frontend
 ```
-Frontend runs at `http://localhost:5173`.
+
+---
+
+## 🔑 Pre-Seeded Demo Accounts
+
+Password for all pre-seeded accounts: **`Brightloop@2026`**
+
+| Role | Email | Access |
+|---|---|---|
+| **Admin** | `admin@brightloop.com` | Full executive dashboard, lifecycle overrides, products, plans, discounts, manual cron triggers |
+| **Staff** | `staff@brightloop.com` | Sales operations, quotation dispatching, and quote-to-subscription conversion |
+| **Customer** | `customer@acmecorp.com` | Customer portal, subscription self-service, invoice PDF downloads, catalog |
+
+---
+
+## 📡 Key API Endpoints
+
+- `POST /api/v1/auth/login` — Sign in and receive JWT token
+- `POST /api/v1/auth/register` — Create account with password strength enforcement
+- `GET /api/v1/analytics/overview` — High-performance KPIs and MRR calculations (<2s response time)
+- `GET /api/v1/subscriptions` — Filter subscriptions by status, customer, or search
+- `POST /api/v1/subscriptions/:id/send-quote` — DRAFT &rarr; QUOTATION
+- `POST /api/v1/subscriptions/:id/accept-quote` — QUOTATION &rarr; CONFIRMED
+- `POST /api/v1/subscriptions/:id/activate` — CONFIRMED &rarr; ACTIVE
+- `GET /api/v1/invoices/:id/pdf` — Stream PDFKit-rendered invoice PDF
+- `POST /api/v1/payments` — Record payment and auto-reconcile invoice balance
+- `POST /api/v1/jobs/run-billing` — Manually trigger automated billing cycle
