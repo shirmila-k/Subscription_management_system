@@ -21,7 +21,7 @@ export const Login: React.FC = () => {
       if (user.role === 'ADMIN') {
         navigate('/admin/dashboard');
       } else if (user.role === 'STAFF') {
-        navigate('/admin/subscriptions');
+        navigate('/staff');
       } else {
         navigate('/portal/dashboard');
       }
